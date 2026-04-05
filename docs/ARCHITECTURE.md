@@ -103,6 +103,58 @@ Bug reports follow a similar flow but begin with a triage step instead of
 planning. If triage finds the bug valid, it skips planning and goes directly
 to a code worker.
 
+### Review Disputes and Worker Pushback
+
+Workers do not blindly accept every review item. When a code worker receives
+review feedback, it evaluates each item and either **fixes** it or **disputes**
+it. The `item_responses` array on `WorkerResult` records the action taken for
+each review item (`"fixed"` or `"disputed"`) along with the worker's reasoning.
+
+If any items are disputed, the reviewer re-reviews the code with the worker's
+dispute reasoning attached. The reviewer then makes a per-item decision:
+
+- **Accept the dispute** — drop the item (the worker was right).
+- **Escalate** — mark the item with `"type": "escalate"`. The reviewer still
+  disagrees after considering the worker's argument, so the item is sent to a
+  human for arbitration.
+
+Escalated items become blocked `human` tasks containing both the reviewer's
+concern and the worker's counter-argument. The human decides who is right.
+
+The full flow:
+
+```
+review ──> worker (fix or dispute each item)
+               │
+               ├── fixed items ──> re-review confirms fix
+               │
+               └── disputed items ──> re-review
+                                         │
+                                         ├── accept ──> item dropped
+                                         │
+                                         └── escalate ──> human task (arbitration)
+```
+
+Only one dispute round is allowed. After the re-review, any remaining
+disagreements are escalated — there is no second dispute cycle.
+
+**Key model fields:**
+
+- `Task.dispute_round` (int, default 0) — tracks which dispute round a worker
+  task is in. Round 0 is the initial implementation; round 1+ means the worker
+  is responding to review feedback and may dispute items. The reviewer checks
+  this field to know whether worker responses are available.
+- `WorkerResult.item_responses` (list of dicts) — each entry has `"title"`,
+  `"action"` (`"fixed"` or `"disputed"`), and `"reason"` explaining the
+  worker's decision.
+- `ReviewItem.type` — values are `"bug"`, `"improvement"`, or `"escalate"`.
+  The `"escalate"` type is used exclusively during re-reviews when the reviewer
+  insists on a finding the worker disputed.
+
+**GitHub integration:** disputes and escalations are posted as comments on the
+associated PR (`post_dispute_to_pr`, `post_escalation_to_pr` in
+`github_sync.py`), giving full visibility into agent disagreements.
+
 ## Feature Status State Machine
 
 ```

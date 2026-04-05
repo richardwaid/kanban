@@ -309,6 +309,7 @@
     <h1>Kanban Agents</h1>
     <div class="header-right">
       <div class="header-stats" id="header-stats"></div>
+      <span id="github-indicator" style="font-size:11px;color:var(--text-dim)"></span>
       <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-muted);cursor:pointer" title="50% chance worker introduces a deliberate bug">
         <input type="checkbox" id="janky-toggle" style="cursor:pointer"> Janky
       </label>
@@ -925,6 +926,8 @@ async function showFeatureDetail(featureId) {
       <div class="detail-section">
         <div class="detail-field"><strong>Status:</strong> ${feat.status} <strong style="margin-left:8px">Iterations:</strong> ${feat.iteration_count}</div>
         <div class="detail-field"><strong>Current Task:</strong> ${feat.current_task_id||'none'} <strong style="margin-left:8px">Commit:</strong> ${feat.latest_commit_id ? `<code style="color:var(--green)">${feat.latest_commit_id.slice(0,12)}</code>` : 'none'}</div>
+        ${feat.github_pr_url ? `<div class="detail-field"><strong>PR:</strong> <a href="${feat.github_pr_url}" target="_blank" style="color:var(--accent)">#${feat.github_pr_number}</a></div>` : ''}
+        ${feat.github_issue_number ? `<div class="detail-field"><strong>Issue:</strong> #${feat.github_issue_number}</div>` : ''}
       </div>
       ${bodyOrder}
       ${planFeedbackHtml}
@@ -1031,6 +1034,14 @@ for (const id of ['create-modal', 'create-bug-modal', 'detail-modal', 'feature-m
 // --- Janky mode ---
 const jankyToggle = document.getElementById('janky-toggle');
 fetch(`${API}/api/settings`).then(r => r.json()).then(d => { jankyToggle.checked = d.janky_mode; }).catch(() => {});
+
+// GitHub indicator
+fetch(`${API}/api/settings/github`).then(r => r.json()).then(d => {
+  const el = document.getElementById('github-indicator');
+  if (d.connected) {
+    el.innerHTML = `<span style="color:var(--green)" title="${d.repo}">GH</span>`;
+  }
+}).catch(() => {});
 jankyToggle.addEventListener('change', async () => {
   try {
     const resp = await fetch(`${API}/api/settings/janky-mode`, { method: 'POST' });

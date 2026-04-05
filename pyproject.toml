@@ -5,6 +5,7 @@ description = "Two-agent Kanban loop for software work using Claude CLI"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi==0.115.12",
+    "httpx==0.28.1",
     "uvicorn[standard]==0.34.2",
     "pyyaml==6.0.2",
     "pyjwt[crypto]>=2.12.1",
@@ -12,7 +13,6 @@ dependencies = [
 
 [tool.uv]
 dev-dependencies = [
-    "httpx==0.28.1",
     "pytest==8.3.5",
     "pytest-asyncio==0.25.3",
 ]

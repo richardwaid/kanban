@@ -1,8 +1,9 @@
-"""Git worktree management for isolated worker execution."""
+"""Git worktree management for isolated worker execution and GitHub repo setup."""
 
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -51,6 +52,7 @@ def ensure_feature_worktree(repo_path: str, feature_id: str) -> tuple[str, str]:
     if Path(wt_path).exists():
         # Worktree already exists — reuse it
         logger.info("Reusing worktree for %s at %s", feature_id, wt_path)
+        setup_memory_symlink(repo_path, wt_path)
         return wt_path, branch_name
 
     # Determine base: default branch
@@ -64,6 +66,7 @@ def ensure_feature_worktree(repo_path: str, feature_id: str) -> tuple[str, str]:
 
     Path(wt_path).parent.mkdir(parents=True, exist_ok=True)
     _run_git(repo_path, "worktree", "add", "-b", branch_name, wt_path, base_ref)
+    setup_memory_symlink(repo_path, wt_path)
     logger.info("Created feature worktree for %s at %s (branch: %s)", feature_id, wt_path, branch_name)
     return wt_path, branch_name
 
@@ -171,6 +174,113 @@ def merge_branch(repo_path: str, branch_name: str, target: str | None = None) ->
     commit_hash = hash_result.stdout.strip()
     logger.info("Merged %s into %s: %s", branch_name, target, commit_hash[:12])
     return commit_hash
+
+
+# --- GitHub repo setup ---
+
+def setup_repo(repo_path: str, github_client) -> None:
+    """Ensure the local repo is set up for GitHub operations.
+
+    Clones if missing, configures remote URL with fresh token, sets bot author.
+    """
+    repo = Path(repo_path)
+    token = github_client.get_token()
+    remote_url = f"https://x-access-token:{token}@github.com/{github_client.repo}.git"
+
+    if not repo.exists() or not (repo / ".git").exists():
+        # Clone the repo
+        repo.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["git", "clone", remote_url, str(repo)],
+            capture_output=True, text=True, check=True,
+        )
+        logger.info("Cloned %s into %s", github_client.repo, repo_path)
+    else:
+        # Update remote URL with fresh token
+        remotes = _run_git(repo_path, "remote", check=False).stdout.strip()
+        if "origin" in remotes.splitlines():
+            _run_git(repo_path, "remote", "set-url", "origin", remote_url, check=False)
+        else:
+            _run_git(repo_path, "remote", "add", "origin", remote_url, check=False)
+        logger.info("Updated remote URL for %s", github_client.repo)
+
+    # Set bot author identity
+    app_id = github_client.app_id
+    _run_git(repo_path, "config", "user.name", "kanban-agents[bot]", check=False)
+    _run_git(repo_path, "config", "user.email",
+             f"{app_id}+kanban-agents[bot]@users.noreply.github.com", check=False)
+
+
+def refresh_remote_token(repo_path: str, github_client) -> None:
+    """Update the remote URL with a fresh installation token."""
+    token = github_client.get_token()
+    remote_url = f"https://x-access-token:{token}@github.com/{github_client.repo}.git"
+    _run_git(repo_path, "remote", "set-url", "origin", remote_url, check=False)
+
+
+def push_branch(repo_path: str, branch_name: str, github_client) -> None:
+    """Push a branch to the GitHub remote."""
+    refresh_remote_token(repo_path, github_client)
+    result = _run_git(repo_path, "push", "-u", "origin", branch_name, check=False)
+    if result.returncode != 0:
+        # Force push if branch diverged (e.g. after rebase)
+        logger.warning("Push failed, trying force push: %s", result.stderr.strip())
+        _run_git(repo_path, "push", "--force-with-lease", "-u", "origin", branch_name)
+    logger.info("Pushed branch %s to origin", branch_name)
+
+
+def sync_default_branch(repo_path: str, github_client=None) -> None:
+    """Sync local default branch with remote after a PR merge."""
+    if github_client:
+        refresh_remote_token(repo_path, github_client)
+    default = detect_default_branch(repo_path)
+    _run_git(repo_path, "fetch", "origin", check=False)
+    _run_git(repo_path, "checkout", default, check=False)
+    _run_git(repo_path, "reset", "--hard", f"origin/{default}", check=False)
+    logger.info("Synced local %s with origin", default)
+
+
+# --- Memory symlinks ---
+
+def _claude_project_slug(path: str) -> str:
+    """Convert an absolute path to Claude CLI's project directory slug."""
+    return path.replace("/", "-").lstrip("-")
+
+
+def setup_memory_symlink(repo_path: str, worktree_path: str) -> None:
+    """Symlink a worktree's Claude memory directory to the repo root's memory.
+
+    This gives all agents shared learning across features while keeping
+    conversation sessions isolated per worktree.
+    """
+    claude_dir = Path.home() / ".claude" / "projects"
+    repo_slug = _claude_project_slug(str(Path(repo_path).resolve()))
+    wt_slug = _claude_project_slug(str(Path(worktree_path).resolve()))
+
+    repo_memory = claude_dir / repo_slug / "memory"
+    wt_project = claude_dir / wt_slug
+    wt_memory = wt_project / "memory"
+
+    # Ensure repo memory dir exists
+    repo_memory.mkdir(parents=True, exist_ok=True)
+    # Ensure worktree project dir exists
+    wt_project.mkdir(parents=True, exist_ok=True)
+
+    # Create symlink if it doesn't exist (or is not already a symlink)
+    if wt_memory.is_symlink():
+        if wt_memory.resolve() == repo_memory.resolve():
+            return  # Already correct
+        wt_memory.unlink()
+    elif wt_memory.exists():
+        # Real directory — move contents to repo memory, then replace with symlink
+        for item in wt_memory.iterdir():
+            target = repo_memory / item.name
+            if not target.exists():
+                shutil.move(str(item), str(target))
+        shutil.rmtree(wt_memory)
+
+    wt_memory.symlink_to(repo_memory)
+    logger.info("Symlinked memory: %s -> %s", wt_slug, repo_slug)
 
 
 def cleanup_stale_worktrees(repo_path: str) -> None:

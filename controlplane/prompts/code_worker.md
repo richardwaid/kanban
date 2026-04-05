@@ -40,6 +40,26 @@ After committing, you MUST output ONLY this JSON and nothing else:
 }}
 ```
 
+## Addressing Review Feedback
+
+If your task description includes a "Review Items to Address" section, you must address **every** item:
+
+- **Fix** the item if you agree with the reviewer's assessment. Make the code change and commit.
+- **Dispute** the item if you believe the reviewer is wrong or the issue doesn't apply. Do NOT make changes for disputed items.
+
+Include an `item_responses` array in your output showing what you did with each item:
+
+```json
+{{
+  "item_responses": [
+    {{"title": "<item title>", "action": "fixed", "details": "<what you changed>"}},
+    {{"title": "<item title>", "action": "disputed", "reason": "<clear explanation of why the reviewer is wrong>"}}
+  ]
+}}
+```
+
+Only dispute when you have a strong technical reason. "I disagree" is not enough — explain specifically why the reviewer's assessment is incorrect based on the code.
+
 ## Asking Questions
 
 If you need clarification or a decision from a human before you can proceed fully, you may include a `human_tasks` array in your output. Complete as much work as you can, commit it, then flag the question:

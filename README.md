@@ -103,6 +103,21 @@ merge strategy is:
 Freebase tasks are serialized (max 1 at a time) to avoid race conditions on the
 default branch.
 
+### Review Disputes and Escalation
+
+Workers can push back on review feedback they disagree with. When a code worker
+receives review items, it evaluates each one and either fixes it or disputes it
+with a reason. The reviewer then re-reviews, considering the worker's arguments.
+If the reviewer accepts the dispute, the item is dropped. If the reviewer still
+disagrees, the item is escalated to a human for arbitration.
+
+Only one pushback round is allowed — after that, unresolved disagreements go to
+a human. This prevents infinite review loops while still giving the worker a
+voice.
+
+Disputes and escalations are posted as comments on the GitHub PR, so human
+reviewers can see the full agent-to-agent disagreement before making a call.
+
 ### Janky Mode
 
 A toggle in the settings that injects deliberate bugs into code_worker output.
@@ -110,6 +125,10 @@ When active, there is a 50% chance each worker task receives an addendum
 instructing it to introduce one subtle, catchable flaw (XSS, off-by-one, race
 condition, etc.). Useful for testing whether the code_reviewer agent catches
 realistic bugs.
+
+Set `KANBAN_JANKY_FORCE=true` to override the coin flip and inject chaos into
+every worker task (100% injection rate). Useful for stress-testing the review
+pipeline.
 
 Toggle via the UI settings or the API:
 
@@ -192,6 +211,7 @@ Environment variables:
 | `KANBAN_MAX_CONCURRENT` | `5` | Max concurrent agent tasks |
 | `KANBAN_MAX_CONCURRENT_WORKERS` | `3` | Max concurrent code_worker tasks |
 | `KANBAN_TASK_TIMEOUT` | `300` | Claude CLI subprocess timeout (seconds) |
+| `KANBAN_JANKY_FORCE` | `false` | Set to `true` for 100% janky injection rate |
 
 ## Further Reading
 

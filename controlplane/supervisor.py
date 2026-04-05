@@ -41,6 +41,15 @@ _task_executor = ThreadPoolExecutor(max_workers=MAX_CONCURRENT, thread_name_pref
 _running: dict[str, tuple[asyncio.Future, str]] = {}
 
 
+def _get_github_client():
+    """Get the GitHub client from the server, if configured."""
+    try:
+        from controlplane.server import _github_client
+        return _github_client
+    except (ImportError, AttributeError):
+        return None
+
+
 def _load_feature_or_bail(task: Task):
     """Load the feature for a task. Returns None and logs error if not found."""
     feature = store.load_feature(task.root_feature_id)
@@ -65,6 +74,12 @@ def _handle_triage(task: Task) -> None:
     # Mark triage task done
     store.move_task(task, "done")
     logger.info("Triage %s done. Verdict: %s", task.id, result.verdict)
+
+    # Post triage result to GitHub issue if applicable
+    github_client = _get_github_client()
+    if github_client and feature.github_issue_number:
+        from controlplane.github_sync import post_triage_result
+        post_triage_result(github_client, feature, asdict(result))
 
     if result.verdict == TriageVerdict.VALID.value:
         # Valid bug — create code_worker task directly (no planning step)
@@ -152,18 +167,80 @@ def _mark_feature_done(feature: Feature) -> None:
     store.save_feature(feature)
     # Clean up the persistent feature worktree
     worktree.remove_feature_worktree(REPO_PATH, feature.id)
+    # Close linked GitHub issue if applicable
+    github_client = _get_github_client()
+    if github_client and feature.github_issue_number:
+        from controlplane.github_sync import close_issue
+        close_issue(github_client, feature)
     logger.info("Feature %s marked done.", feature.id)
+
+
+def _handle_freebase_github(task: Task, feature, github_client) -> None:
+    """GitHub flow: push latest commits, merge existing PR."""
+    branch_name = task.branch_name
+    auto_merge = os.environ.get("KANBAN_AUTO_MERGE", "true").lower() == "true"
+
+    logger.info("Freebase (GitHub) %s: merging %s for %s", task.id, branch_name, feature.id)
+
+    # Push latest commits (worker may have added fixes since PR was opened)
+    worktree.push_branch(REPO_PATH, branch_name, github_client)
+
+    # PR should already exist (opened by _handle_code_worker)
+    if not feature.github_pr_number:
+        # Fallback: open PR if it wasn't created earlier
+        try:
+            pr = github_client.create_pr(
+                head_branch=branch_name,
+                title=feature.title,
+                body=f"Automated PR for {feature.id}: {feature.title}\n\n{feature.description[:500]}",
+            )
+            feature.github_pr_number = pr["number"]
+            feature.github_pr_url = pr["html_url"]
+            store.save_feature(feature)
+            logger.info("Opened PR #%d for %s: %s", pr["number"], feature.id, pr["html_url"])
+        except Exception:
+            logger.exception("Failed to open PR for %s", feature.id)
+
+    store.save_worker_result(task.id, asdict(FreebaseResult(
+        task_id=task.id, status="done",
+        merge_commit_id=feature.latest_commit_id or "",
+        summary=f"PR #{feature.github_pr_number} ready for merge",
+    )))
+    store.move_task(task, "done")
+
+    if auto_merge and feature.github_pr_number:
+        try:
+            github_client.merge_pr(feature.github_pr_number, merge_method="squash")
+            logger.info("Auto-merged PR #%d for %s", feature.github_pr_number, feature.id)
+
+            # Sync local default branch
+            worktree.sync_default_branch(REPO_PATH, github_client)
+
+            # Clean up
+            worktree.delete_branch(REPO_PATH, branch_name)
+            _mark_feature_done(feature)
+        except Exception:
+            logger.exception("Auto-merge failed for PR #%d", feature.github_pr_number)
+            feature.status = FeatureStatus.MERGING.value
+            store.save_feature(feature)
+    else:
+        logger.info("PR #%d for %s (auto-merge disabled)", feature.github_pr_number, feature.id)
 
 
 def _handle_freebase(task: Task) -> None:
     """Execute a freebase (merge master) task — merge approved branch into default.
 
-    Strategy:
-    1. Try a programmatic rebase + ff merge (fast, no agent needed).
-    2. If rebase has conflicts, invoke the freebase Claude agent to resolve them.
+    GitHub mode: push branch, open PR, auto-merge.
+    Local mode: programmatic rebase + ff merge, agent fallback for conflicts.
     """
     feature = _load_feature_or_bail(task)
     if not feature:
+        return
+
+    # GitHub mode: push + PR instead of local merge
+    github_client = _get_github_client()
+    if github_client:
+        _handle_freebase_github(task, feature, github_client)
         return
 
     branch_name = task.branch_name
@@ -322,6 +399,34 @@ def _handle_code_worker(task: Task) -> None:
     feature.latest_commit_id = result.commit_id
     feature.iteration_count = task.iteration
 
+    # Push branch and open PR early (so reviewer comments appear on GitHub)
+    github_client = _get_github_client()
+    if github_client:
+        worktree.push_branch(REPO_PATH, branch_name, github_client)
+        if not feature.github_pr_number:
+            # First push — open a PR
+            try:
+                pr = github_client.create_pr(
+                    head_branch=branch_name,
+                    title=feature.title,
+                    body=f"Automated PR for {feature.id}: {feature.title}\n\n{feature.description[:500]}",
+                )
+                feature.github_pr_number = pr["number"]
+                feature.github_pr_url = pr["html_url"]
+                logger.info("Opened PR #%d early for %s: %s", pr["number"], feature.id, pr["html_url"])
+                if feature.github_issue_number:
+                    from controlplane.github_sync import post_pr_link
+                    post_pr_link(github_client, feature)
+            except Exception:
+                logger.exception("Failed to open early PR for %s", feature.id)
+
+        # Post worker disputes to PR if this was a dispute round
+        if result.item_responses and feature.github_pr_number:
+            from controlplane.github_sync import post_dispute_to_pr
+            post_dispute_to_pr(github_client, feature, result.item_responses)
+
+    store.save_feature(feature)
+
     # Create reviewer task
     reviewer_id = store._next_task_id()
     reviewer_task = Task(
@@ -377,7 +482,16 @@ def _handle_code_reviewer(task: Task) -> None:
     logger.info("Running code_reviewer for %s (feature: %s, commit: %s, worktree: %s)",
                 task.id, feature.id, task.review_commit_id, wt_path)
 
-    result = run_code_reviewer(task, feature, wt_path, approved_plan=approved_plan)
+    # Load worker responses for re-reviews (dispute round > 0)
+    worker_responses = None
+    worker_task = store.load_task(task.parent_task_id) if task.parent_task_id else None
+    if worker_task and getattr(worker_task, 'dispute_round', 0) > 0:
+        worker_artifact = store.load_artifact("worker_results", worker_task.id)
+        if worker_artifact:
+            worker_responses = worker_artifact.get("item_responses")
+
+    result = run_code_reviewer(task, feature, wt_path, approved_plan=approved_plan,
+                               worker_responses=worker_responses)
 
     # Save review artifact
     store.save_review_result(task.id, asdict(result))
@@ -385,6 +499,12 @@ def _handle_code_reviewer(task: Task) -> None:
     # Mark reviewer task done
     store.move_task(task, "done")
     logger.info("Reviewer %s done. Outcome: %s", task.id, result.review_outcome)
+
+    # Post review to GitHub PR (every iteration, not just final)
+    github_client = _get_github_client()
+    if github_client and feature.github_pr_number:
+        from controlplane.github_sync import post_review_to_pr
+        post_review_to_pr(github_client, feature, asdict(result))
 
     # Check for bugs even if approved — bugs always create a worker task
     bugs = [i for i in result.items if i.type == "bug"]
@@ -424,21 +544,59 @@ def _handle_code_reviewer(task: Task) -> None:
         new_iteration = task.iteration + 1
         logger.info("Feature %s approved but %d bug(s) found; creating fix task", feature.id, len(bugs))
 
-        _create_followup_worker(task, feature, top_item, new_iteration)
+        _create_followup_worker(task, feature, top_item, new_iteration, all_items=bugs)
         return
 
     elif result.review_outcome == ReviewOutcome.NEEDS_CHANGES.value:
-        # Bugs take priority over improvements
-        all_items = sorted(bugs, key=lambda x: x.priority) + sorted(non_bugs, key=lambda x: x.priority)
-        if not all_items:
+        # Separate escalated items (disputed and reviewer insists) from regular items
+        escalated = [i for i in result.items if i.type == "escalate"]
+        regular = [i for i in result.items if i.type != "escalate"]
+
+        # Escalated items → human tasks
+        if escalated:
+            logger.info("Feature %s has %d escalated dispute(s), creating human tasks",
+                        feature.id, len(escalated))
+            # Get worker's dispute reasons from the worker artifact
+            worker_task = store.load_task(task.parent_task_id) if task.parent_task_id else None
+            worker_artifact = store.load_artifact("worker_results", worker_task.id) if worker_task else None
+            worker_responses = (worker_artifact or {}).get("item_responses", [])
+            responses_by_title = {r.get("title", ""): r for r in worker_responses}
+
+            for item in escalated:
+                worker_resp = responses_by_title.get(item.title, {})
+                worker_reason = worker_resp.get("reason", "No reason provided")
+                _create_human_tasks(task, feature, [{
+                    "title": f"Review dispute: {item.title}",
+                    "description": (
+                        f"**Worker and reviewer disagree.**\n\n"
+                        f"**Reviewer says:** {item.description}\n\n"
+                        f"**Worker's reasoning:** {worker_reason}\n\n"
+                        f"File: {item.file or 'N/A'}, Line: {item.line or 'N/A'}"
+                    ),
+                }])
+
+            # Post escalation to GitHub PR
+            gh = _get_github_client()
+            if gh and feature.github_pr_number:
+                from controlplane.github_sync import post_escalation_to_pr
+                post_escalation_to_pr(gh, feature, escalated, worker_responses)
+
+        # Regular items (non-escalated) → follow-up worker
+        all_regular = sorted([i for i in regular if i.type == "bug"], key=lambda x: x.priority) + \
+                      sorted([i for i in regular if i.type != "bug"], key=lambda x: x.priority)
+
+        if not all_regular and not escalated:
             logger.warning("Reviewer returned needs_changes but no items; treating as approved")
             _mark_feature_done(feature)
             return
 
-        top_item = all_items[0]
-        new_iteration = task.iteration + 1
-
-        _create_followup_worker(task, feature, top_item, new_iteration)
+        if all_regular:
+            top_item = all_regular[0]
+            new_iteration = task.iteration + 1
+            _create_followup_worker(task, feature, top_item, new_iteration, all_items=all_regular)
+        elif escalated and not regular:
+            # Only escalated items remain — feature waits for human arbitration
+            logger.info("Feature %s blocked on %d escalated dispute(s)", feature.id, len(escalated))
         return
 
 
@@ -473,8 +631,20 @@ def _check_and_create_human_tasks(parent_task: Task, feature: Feature, artifact_
             return  # only one artifact per task
 
 
-def _create_followup_worker(parent_task: Task, feature: Feature, item, new_iteration: int) -> None:
-    """Create a follow-up worker task from a review item."""
+def _create_followup_worker(parent_task: Task, feature: Feature, item, new_iteration: int,
+                            all_items: list | None = None) -> None:
+    """Create a follow-up worker task from review items.
+
+    If all_items is provided, includes them as structured review feedback
+    so the worker can fix or dispute each one.
+    """
+    import json as _json
+
+    description = item.description
+    if all_items:
+        items_data = [asdict(i) if hasattr(i, '__dataclass_fields__') else i for i in all_items]
+        description += f"\n\n## Review Items to Address\n\n{_json.dumps(items_data, indent=2)}"
+
     worker_id = store._next_task_id()
     worker_task = Task(
         id=worker_id,
@@ -482,10 +652,11 @@ def _create_followup_worker(parent_task: Task, feature: Feature, item, new_itera
         agent="code_worker",
         type="implement",
         title=item.title,
-        description=item.description,
+        description=description,
         priority=parent_task.priority,
         iteration=new_iteration,
         parent_task_id=parent_task.id,
+        dispute_round=getattr(parent_task, 'dispute_round', 0) + 1,
     )
     store.save_task(worker_task)
 

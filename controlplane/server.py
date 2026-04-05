@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from controlplane import store
 from controlplane.models import FeatureStatus, Task
 from controlplane.runner import is_task_alive, kill_task
-from controlplane.supervisor import run_loop, get_running_agents, MAX_CONCURRENT
+from controlplane.supervisor import run_loop, get_running_agents, MAX_CONCURRENT, REPO_PATH
 
 import re
 
@@ -67,17 +67,40 @@ logger = logging.getLogger(__name__)
 UI_DIR = Path(__file__).parent.parent / "ui"
 
 
+_github_client = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Start the supervisor loop as a background task
-    task = asyncio.create_task(run_loop())
+    global _github_client
+    tasks = []
+
+    # Initialize GitHub client if configured
+    from controlplane.github_client import create_client_from_env
+    _github_client = create_client_from_env()
+    if _github_client:
+        logger.info("GitHub integration enabled for %s", _github_client.repo)
+        # Setup repo (clone or configure remote)
+        from controlplane.worktree import setup_repo
+        await asyncio.get_event_loop().run_in_executor(None, setup_repo, REPO_PATH, _github_client)
+        # Start issue poller
+        from controlplane.github_sync import poll_github_issues
+        tasks.append(asyncio.create_task(poll_github_issues(_github_client)))
+    else:
+        logger.info("GitHub integration not configured (local-only mode)")
+
+    # Start the supervisor loop
+    tasks.append(asyncio.create_task(run_loop()))
     logger.info("Supervisor loop started as background task")
+
     yield
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
+
+    for t in tasks:
+        t.cancel()
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(
@@ -112,6 +135,9 @@ class FeatureResponse(BaseModel):
     current_task_id: str | None
     latest_commit_id: str | None
     iteration_count: int
+    github_issue_number: int | None = None
+    github_pr_number: int | None = None
+    github_pr_url: str | None = None
     created_at: str
     updated_at: str
 
@@ -154,6 +180,14 @@ class BoardResponse(BaseModel):
 @app.get("/api/settings", tags=["Settings"])
 def get_settings():
     return {"janky_mode": _janky_mode}
+
+
+@app.get("/api/settings/github", tags=["Settings"])
+def get_github_settings():
+    return {
+        "connected": _github_client is not None,
+        "repo": _github_client.repo if _github_client else None,
+    }
 
 
 @app.post("/api/settings/janky-mode", tags=["Settings"])
@@ -237,6 +271,12 @@ def resubmit_feature(feature_id: str):
     feature.status = FeatureStatus.TRIAGING.value
     feature.current_task_id = tid
     store.save_feature(feature)
+
+    # Sync updated description back to GitHub issue
+    if _github_client and feature.github_issue_number:
+        from controlplane.github_sync import sync_description_to_github
+        sync_description_to_github(_github_client, feature)
+
     logger.info("Feature %s resubmitted for triage. Task %s", feature_id, tid)
     return {"ok": True, "task_id": tid}
 

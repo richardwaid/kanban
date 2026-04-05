@@ -99,6 +99,9 @@ class Feature:
     current_task_id: str | None = None
     latest_commit_id: str | None = None
     iteration_count: int = 0
+    github_issue_number: int | None = None
+    github_pr_number: int | None = None
+    github_pr_url: str | None = None
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
 
@@ -129,6 +132,7 @@ class Task:
     review_commit_id: str | None = None
     branch_name: str | None = None
     is_continuation: bool = False
+    dispute_round: int = 0
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
 
@@ -139,13 +143,15 @@ class Task:
 @dataclass
 class WorkerResult:
     """Structured result from a code_worker agent. Contains the commit ID of the
-    implementation and an optional list of human_tasks (questions for the user)."""
+    implementation and an optional list of human_tasks (questions for the user).
+    item_responses tracks how the worker addressed each review item (fixed or disputed)."""
 
     task_id: str
     status: str
     commit_id: str
     summary: str
     human_tasks: list[dict] = field(default_factory=list)
+    item_responses: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -157,6 +163,8 @@ class ReviewItem:
     title: str
     description: str
     type: str = "improvement"  # bug | improvement
+    file: str | None = None
+    line: int | None = None
 
 
 @dataclass

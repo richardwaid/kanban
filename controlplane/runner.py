@@ -559,10 +559,11 @@ def run_code_worker(task: Task, feature: Feature, repo_path: str,
     )
 
     if janky_mode:
+        force = os.environ.get("KANBAN_JANKY_FORCE", "").lower() == "true"
         import random
-        if random.random() < 0.5:
+        if force or random.random() < 0.5:
             prompt += JANKY_ADDENDUM
-            logger.info("Janky mode: chaos injection active for %s", task.id)
+            logger.info("Janky mode: chaos injection active for %s%s", task.id, " (forced)" if force else "")
 
     raw_output = _run_claude(
         prompt,
@@ -584,16 +585,31 @@ def run_code_worker(task: Task, feature: Feature, repo_path: str,
         commit_id=data["commit_id"],
         summary=data["summary"],
         human_tasks=data.get("human_tasks", []),
+        item_responses=data.get("item_responses", []),
     )
 
 
 def run_code_reviewer(task: Task, feature: Feature, repo_path: str,
-                      approved_plan: str = "") -> ReviewResult:
+                      approved_plan: str = "", worker_responses: list[dict] | None = None) -> ReviewResult:
     """Run the code reviewer agent via Claude CLI."""
     if approved_plan:
         plan_section = f"## Approved Plan\n\nThe following plan was approved. Verify the implementation covers all items:\n\n{approved_plan}\n\n"
     else:
         plan_section = ""
+
+    # Build worker responses section for re-reviews
+    if worker_responses:
+        import json as _json
+        wr_lines = ["## Worker Responses to Previous Review\n",
+                     "The worker addressed your previous review items. Evaluate each response:\n",
+                     "- For `fixed` items: verify the fix is correct.",
+                     "- For `disputed` items: consider the reasoning carefully.",
+                     "  If the reasoning is sound, DROP the item (do not include it).",
+                     "  If you still disagree, include it with `\"type\": \"escalate\"` — it will be sent to a human.\n",
+                     "```json", _json.dumps(worker_responses, indent=2), "```\n"]
+        worker_section = "\n".join(wr_lines)
+    else:
+        worker_section = ""
 
     prompt = _render_prompt(
         "code_reviewer.md",
@@ -605,6 +621,7 @@ def run_code_reviewer(task: Task, feature: Feature, repo_path: str,
         iteration=str(task.iteration),
         repo_path=repo_path,
         approved_plan_section=plan_section,
+        worker_responses_section=worker_section,
     )
 
     raw_output = _run_claude(
@@ -630,6 +647,8 @@ def run_code_reviewer(task: Task, feature: Feature, repo_path: str,
             title=item_data["title"],
             description=item_data["description"],
             type=item_data.get("type", "improvement"),
+            file=item_data.get("file"),
+            line=item_data.get("line"),
         ))
 
     return ReviewResult(

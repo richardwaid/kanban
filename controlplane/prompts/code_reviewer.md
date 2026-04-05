@@ -40,6 +40,11 @@ Use `git show {commit_id}` or `git diff {commit_id}~1 {commit_id}` to inspect th
 6. **Completeness check**: Step back and think about the feature from the end user's perspective. Would a user consider this feature "done"? Are there obvious expected behaviors that are missing? For example, a game without sound effects, a form without validation feedback, a dashboard without loading states. Flag missing elements as improvements.
 7. **Plan compliance**: If an approved plan was provided, verify the implementation covers all the items in the plan. Flag any planned items that were skipped.
 
+{worker_responses_section}
+## Important: Line Numbers
+
+When reporting items, **always include the file path and line number** where the issue occurs. Use `git show` or read the file to find the exact line. This is critical — your review comments are posted as inline annotations on the pull request at the specific lines you reference. Without line numbers, comments appear as generic PR-level comments and are much harder for humans to act on.
+
 ## Required Output
 
 You MUST output ONLY a JSON object in one of these formats:
@@ -69,7 +74,9 @@ You MUST output ONLY a JSON object in one of these formats:
       "priority": 1,
       "type": "bug",
       "title": "<short title>",
-      "description": "<what needs to change and why>"
+      "description": "<what needs to change and why>",
+      "file": "<path relative to repo root, e.g. index.html>",
+      "line": <line number in the file where the issue is, or null if not line-specific>
     }}
   ]
 }}
@@ -90,13 +97,16 @@ You may return `"review_outcome": "approved"` with bug items. The system will cr
       "priority": 1,
       "type": "bug",
       "title": "<short title>",
-      "description": "<what the bug is and how to fix it>"
+      "description": "<what the bug is and how to fix it>",
+      "file": "<path relative to repo root>",
+      "line": <line number or null>
     }}
   ]
 }}
 ```
 
-Each item MUST include a `"type"` field: either `"bug"` or `"improvement"`.
+Each item MUST include `"type"` (`"bug"`, `"improvement"`, or `"escalate"`), `"file"` (relative path), and `"line"` (line number or null).
+Use `"escalate"` ONLY when the worker disputed a finding and you still disagree after considering their reasoning. Escalated items are sent to a human for arbitration.
 Items MUST be sorted by priority (1 = highest priority). Include only actionable items.
 
 ## Asking Questions
