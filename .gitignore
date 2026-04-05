@@ -1,0 +1,26 @@
+# Target repo (managed by agents, not part of kanban codebase)
+repo/
+
+# Git worktrees (created at runtime)
+.worktrees/
+
+# Runtime data
+data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Private keys
+*.pem
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# UV
+uv.lock

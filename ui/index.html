@@ -1,0 +1,1047 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kanban Agents</title>
+<style>
+  :root {
+    --bg: #0b0f13;
+    --surface: #141a22;
+    --surface-raised: #1a2230;
+    --border: #252d38;
+    --border-subtle: #1e2530;
+    --text: #d0d7de;
+    --text-muted: #6e7a88;
+    --text-dim: #444f5c;
+    --accent: #4d94ff;
+    --green: #2ea44f;
+    --green-soft: #1a3a2a;
+    --orange: #d4922a;
+    --orange-soft: #2e2418;
+    --red: #e5534b;
+    --red-soft: #2e1a1a;
+    --purple: #a371f7;
+    --purple-soft: #231a3a;
+    --cyan: #39c5cf;
+    --cyan-soft: #122a2e;
+    --blue-soft: #152238;
+    --planner: #39c5cf;
+    --triage: #e0a040;
+    --human: #f0c060;
+    --freebase: #50e89e;
+    --worker: #4d94ff;
+    --reviewer: #a371f7;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh; font-size: 13px;
+  }
+
+  /* --- Header --- */
+  header {
+    padding: 12px 20px; border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center; background: var(--surface);
+  }
+  header h1 { font-size: 15px; font-weight: 600; letter-spacing: -0.3px; }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .header-stats { font-size: 11px; color: var(--text-muted); display: flex; gap: 12px; }
+  .btn-new {
+    background: var(--accent); color: #fff; border: none; padding: 5px 12px;
+    border-radius: 5px; cursor: pointer; font-size: 12px; font-weight: 600;
+  }
+  .btn-new:hover { filter: brightness(1.1); }
+
+  /* --- Toolbar --- */
+  .toolbar {
+    padding: 8px 20px; display: flex; gap: 8px; align-items: center;
+    border-bottom: 1px solid var(--border-subtle); background: var(--surface);
+  }
+  .toolbar-group { display: flex; gap: 2px; }
+  .tab-btn {
+    font-size: 11px; padding: 3px 10px; border-radius: 4px; cursor: pointer;
+    color: var(--text-dim); border: 1px solid transparent; background: transparent; font-weight: 500;
+  }
+  .tab-btn:hover { color: var(--text-muted); }
+  .tab-btn.active { color: var(--text); border-color: var(--border); background: var(--surface-raised); }
+  .toolbar-sep { width: 1px; height: 16px; background: var(--border); margin: 0 6px; }
+  .search-input {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    padding: 3px 8px; border-radius: 4px; font-size: 11px; width: 160px;
+  }
+  .search-input::placeholder { color: var(--text-dim); }
+
+  /* --- Main list --- */
+  .main { padding: 0 20px; overflow-y: auto; height: calc(100vh - 92px); }
+
+  /* Section headers */
+  .section-head {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-dim);
+    padding: 14px 0 6px; font-weight: 600; border-bottom: 1px solid var(--border-subtle);
+    display: flex; justify-content: space-between; align-items: center;
+    position: sticky; top: 0; background: var(--bg); z-index: 1;
+  }
+  .section-count {
+    background: var(--border); padding: 1px 7px; border-radius: 8px; font-size: 10px; color: var(--text-muted);
+  }
+
+  /* --- Feature/bug rows --- */
+  .item-row {
+    display: grid; grid-template-columns: 20px 90px 1fr 100px 80px 100px;
+    gap: 8px; align-items: center; padding: 8px 6px;
+    border-bottom: 1px solid var(--border-subtle); cursor: pointer; transition: background 0.1s;
+  }
+  .item-row:hover { background: var(--surface); }
+  .item-row.expanded { background: var(--surface); border-bottom: none; }
+  .item-expand {
+    font-size: 10px; color: var(--text-dim); cursor: pointer; user-select: none;
+    width: 16px; text-align: center; flex-shrink: 0; display: inline-block;
+  }
+  .item-expand:hover { color: var(--text); }
+  .item-id { font-family: 'SF Mono', Consolas, monospace; font-size: 11px; color: var(--text-dim); }
+  .item-title-col { min-width: 0; }
+  .item-title { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .item-kind { font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; padding: 1px 5px; border-radius: 3px; }
+  .item-kind.feature { background: var(--blue-soft); color: var(--accent); }
+  .item-kind.bug_report { background: var(--red-soft); color: var(--red); }
+
+  .item-status {
+    font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px;
+    padding: 2px 8px; border-radius: 10px; text-align: center; white-space: nowrap;
+  }
+  .status-done { background: var(--green-soft); color: var(--green); }
+  .status-in_progress { background: var(--orange-soft); color: var(--orange); }
+  .status-planning { background: var(--cyan-soft); color: var(--planner); }
+  .status-triaging { background: var(--orange-soft); color: var(--triage); }
+  .status-merging { background: rgba(80,232,158,0.12); color: var(--freebase); }
+  .status-needs_info { background: var(--red-soft); color: var(--red); }
+  .status-awaiting_approval { background: var(--cyan-soft); color: var(--cyan); }
+  .status-pending { background: var(--surface-raised); color: var(--text-dim); }
+
+  .item-agent {
+    font-size: 10px; color: var(--text-dim); display: flex; align-items: center; gap: 4px;
+  }
+  .agent-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+  .agent-dot.running { animation: pulse 1.5s ease-in-out infinite; }
+
+  .item-actions { display: flex; gap: 4px; justify-content: flex-end; }
+
+  /* Expandable task list under a feature */
+  .task-drawer {
+    background: var(--surface); border-bottom: 1px solid var(--border-subtle);
+    padding: 4px 6px 8px 98px;
+  }
+  .task-row {
+    display: grid; grid-template-columns: 80px 20px 1fr 80px;
+    gap: 6px; align-items: center; padding: 4px 6px; border-radius: 4px;
+    font-size: 12px; cursor: pointer;
+  }
+  .task-row:hover { background: var(--surface-raised); }
+  .task-id { font-family: 'SF Mono', Consolas, monospace; font-size: 10px; color: var(--text-dim); }
+  .task-agent-pill {
+    font-size: 9px; font-weight: 700; width: 18px; height: 18px; border-radius: 3px;
+    display: flex; align-items: center; justify-content: center; text-transform: uppercase;
+  }
+  .pill-P { background: rgba(57,197,207,0.15); color: var(--planner); }
+  .pill-T { background: rgba(224,160,64,0.15); color: var(--triage); }
+  .pill-W { background: rgba(77,148,255,0.15); color: var(--worker); }
+  .pill-R { background: rgba(163,113,247,0.15); color: var(--reviewer); }
+  .pill-M { background: rgba(80,232,158,0.15); color: var(--freebase); }
+  .pill-H { background: rgba(240,192,96,0.15); color: var(--human); }
+  .task-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
+  .task-status { font-size: 10px; text-align: right; }
+  .task-status .done { color: var(--green); }
+  .task-status .running { color: var(--orange); }
+  .task-status .ready { color: var(--text-dim); }
+  .task-status .failed { color: var(--red); }
+  .task-status .blocked { color: var(--human); }
+
+  /* Human task inline response */
+  .human-response {
+    display: flex; gap: 4px; align-items: center; padding: 6px 6px 6px 104px;
+    background: var(--surface); border-bottom: 1px solid var(--border-subtle);
+  }
+  .human-response input {
+    flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    padding: 4px 8px; border-radius: 4px; font-size: 11px;
+  }
+  .human-response .desc { font-size: 11px; color: var(--text-muted); padding: 2px 6px 6px 104px; background: var(--surface); }
+
+  /* Action buttons */
+  .btn { padding: 4px 12px; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; font-size: 11px; background: var(--surface); color: var(--text); }
+  .btn:hover { border-color: var(--text-muted); }
+  .btn-sm { padding: 2px 8px; font-size: 10px; }
+  .btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn-approve { background: var(--green); color: #fff; border-color: var(--green); }
+  .btn-danger { background: var(--red); color: #fff; border-color: var(--red); }
+
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  /* --- Modals --- */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65);
+    z-index: 100; justify-content: center; align-items: flex-start; padding-top: 50px;
+  }
+  .modal-overlay.active { display: flex; }
+  .modal {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 20px; width: 660px; max-height: 88vh; overflow-y: auto;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.4);
+  }
+  .modal h2 { font-size: 16px; margin-bottom: 14px; font-weight: 600; }
+  .form-group { margin-bottom: 12px; }
+  .form-group label { display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 3px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .form-group input, .form-group textarea, .form-group select {
+    width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    padding: 7px 10px; border-radius: 5px; font-size: 13px; font-family: inherit;
+  }
+  .form-group textarea { resize: vertical; min-height: 70px; }
+  .form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+
+  .detail-section { margin-bottom: 14px; }
+  .detail-section h3 { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 5px; }
+  .detail-field { font-size: 13px; margin-bottom: 3px; }
+  .detail-field strong { color: var(--text-muted); font-weight: 500; margin-right: 4px; }
+
+  /* Result cards */
+  .result-card { background: var(--bg); border: 1px solid var(--border-subtle); border-radius: 6px; overflow: hidden; }
+  .result-header { padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-subtle); }
+  .result-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-dim); font-weight: 600; }
+  .result-outcome { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; }
+  .result-outcome.approved { background: var(--green-soft); color: var(--green); }
+  .result-outcome.needs_changes { background: var(--orange-soft); color: var(--orange); }
+  .result-body { padding: 10px 12px; }
+  .result-summary { font-size: 12px; color: var(--text); line-height: 1.5; margin-bottom: 8px; }
+  .result-field { display: flex; gap: 6px; align-items: baseline; margin-bottom: 4px; font-size: 12px; }
+  .result-field-label { color: var(--text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; min-width: 50px; flex-shrink: 0; }
+  .result-field-value { color: var(--text); font-family: 'SF Mono', Consolas, monospace; font-size: 11px; }
+  .result-items { margin-top: 8px; }
+  .review-item { background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 5px; padding: 8px 10px; margin-bottom: 6px; }
+  .review-item-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+  .review-item-title { font-size: 12px; font-weight: 600; }
+  .review-item-badges { display: flex; gap: 4px; }
+  .review-item-type { font-size: 9px; padding: 1px 5px; border-radius: 3px; font-weight: 600; text-transform: uppercase; }
+  .review-item-type.bug { background: rgba(229,83,75,0.15); color: var(--red); }
+  .review-item-type.improvement { background: var(--blue-soft); color: var(--accent); }
+  .review-item-priority { font-size: 9px; padding: 1px 5px; border-radius: 3px; font-weight: 600; background: var(--orange-soft); color: var(--orange); }
+  .review-item-desc { font-size: 11px; color: var(--text-muted); line-height: 1.5; }
+
+  /* Rendered markdown */
+  .md-rendered { font-size: 13px; line-height: 1.6; color: var(--text); }
+  .md-rendered h1, .md-rendered h2, .md-rendered h3 { font-size: 13px; font-weight: 600; margin: 10px 0 4px; padding-bottom: 3px; border-bottom: 1px solid var(--border-subtle); }
+  .md-rendered h1 { font-size: 15px; } .md-rendered h2 { font-size: 14px; }
+  .md-rendered ul, .md-rendered ol { padding-left: 20px; margin: 4px 0; }
+  .md-rendered li { margin-bottom: 3px; } .md-rendered li::marker { color: var(--text-dim); }
+  .md-rendered p { margin: 4px 0; }
+  .md-rendered code { background: var(--bg); border: 1px solid var(--border-subtle); padding: 1px 4px; border-radius: 3px; font-size: 11px; font-family: 'SF Mono', Consolas, monospace; color: var(--cyan); }
+  .md-rendered pre { background: var(--bg); border: 1px solid var(--border-subtle); border-radius: 5px; padding: 8px 10px; margin: 6px 0; overflow-x: auto; font-size: 11px; }
+  .md-rendered pre code { background: none; border: none; padding: 0; color: var(--text); }
+  .md-rendered strong { color: var(--text); font-weight: 600; }
+  .md-rendered em { color: var(--text-muted); }
+  .md-rendered blockquote { border-left: 3px solid var(--border); padding-left: 10px; margin: 6px 0; color: var(--text-muted); }
+
+  /* Activity feed */
+  .activity-feed { background: var(--bg); border: 1px solid var(--border-subtle); border-radius: 5px; max-height: 350px; overflow-y: auto; font-family: 'SF Mono', Consolas, monospace; font-size: 11px; line-height: 1.5; }
+  .activity-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
+  .activity-toolbar .status-text { font-size: 11px; color: var(--text-muted); }
+  .evt { padding: 3px 10px; border-bottom: 1px solid var(--border-subtle); display: flex; gap: 6px; align-items: baseline; }
+  .evt:last-child { border-bottom: none; }
+  .evt:hover { background: rgba(255,255,255,0.015); }
+  .evt-time { color: var(--text-dim); min-width: 38px; font-size: 10px; flex-shrink: 0; }
+  .evt-icon { min-width: 14px; text-align: center; flex-shrink: 0; font-size: 10px; }
+  .evt-body { flex: 1; min-width: 0; overflow: hidden; }
+  .evt-body .tool-name { color: var(--cyan); font-weight: 600; }
+  .evt-body .tool-result-text { color: var(--green); }
+  .evt-body .text-output { color: var(--text); }
+  .evt-body .error-text { color: var(--red); }
+  .evt-body .result-text { color: var(--green); font-weight: 600; }
+  .evt-body .cost { color: var(--orange); }
+  .evt-detail { margin-top: 1px; color: var(--text-dim); font-size: 10px; white-space: pre-wrap; word-break: break-all; max-height: 60px; overflow: hidden; cursor: pointer; }
+  .evt-detail.expanded { max-height: none; }
+  .evt-detail:hover { color: var(--text-muted); }
+  .no-events { padding: 16px; text-align: center; color: var(--text-dim); }
+
+  /* Empty state */
+  .empty-state { padding: 40px 20px; text-align: center; color: var(--text-dim); font-size: 13px; }
+
+  /* --- Your Turn pane --- */
+  .your-turn-pane {
+    border-bottom: 1px solid var(--border); background: var(--surface);
+  }
+  .your-turn-pane.empty { display: none; }
+  .your-turn-header {
+    padding: 8px 20px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.8px;
+    color: var(--human); font-weight: 600; display: flex; justify-content: space-between; align-items: center;
+  }
+  .your-turn-body { padding: 0 20px 8px; }
+  .your-turn-card {
+    background: var(--bg); border: 1px solid var(--border-subtle); border-radius: 6px;
+    padding: 8px 12px; margin-bottom: 6px; display: flex; gap: 10px; align-items: flex-start;
+    border-left: 3px solid var(--human);
+  }
+  .your-turn-card.action-approve { border-left-color: var(--cyan); }
+  .your-turn-card.action-info { border-left-color: var(--red); }
+  .your-turn-card.action-failed { border-left-color: var(--red); }
+  .your-turn-card .ytc-content { flex: 1; min-width: 0; }
+  .your-turn-card .ytc-id { font-family: 'SF Mono', Consolas, monospace; font-size: 10px; color: var(--text-dim); }
+  .your-turn-card .ytc-title { font-size: 12px; font-weight: 500; margin-top: 2px; }
+  .your-turn-card .ytc-desc { font-size: 11px; color: var(--text-muted); margin-top: 4px; line-height: 1.4; }
+  .your-turn-card .ytc-actions { display: flex; gap: 4px; align-items: center; flex-shrink: 0; }
+  .your-turn-card .ytc-input-row { display: flex; gap: 4px; margin-top: 6px; }
+  .your-turn-card .ytc-input-row input {
+    flex: 1; background: var(--surface); border: 1px solid var(--border); color: var(--text);
+    padding: 4px 8px; border-radius: 4px; font-size: 11px;
+  }
+
+  /* Abandon button in item row */
+  .item-row .abandon-btn {
+    opacity: 0; font-size: 10px; padding: 1px 6px; color: var(--text-dim); border: 1px solid transparent;
+    background: none; cursor: pointer; border-radius: 3px; transition: opacity 0.15s;
+  }
+  .item-row:hover .abandon-btn { opacity: 1; }
+  .item-row .abandon-btn:hover { color: var(--red); border-color: var(--red); }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Kanban Agents</h1>
+    <div class="header-right">
+      <div class="header-stats" id="header-stats"></div>
+      <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-muted);cursor:pointer" title="50% chance worker introduces a deliberate bug">
+        <input type="checkbox" id="janky-toggle" style="cursor:pointer"> Janky
+      </label>
+      <button class="btn-new" id="create-btn">+ Feature</button>
+      <button class="btn-new" id="create-bug-btn" style="background:var(--red)">+ Bug</button>
+    </div>
+  </header>
+
+  <div class="toolbar" id="toolbar">
+    <div class="toolbar-group" id="view-tabs"></div>
+    <div class="toolbar-sep"></div>
+    <input type="text" class="search-input" id="search-input" placeholder="Filter...">
+  </div>
+
+  <div class="your-turn-pane" id="your-turn-pane">
+    <div class="your-turn-header">Your Turn <span class="section-count" id="your-turn-count">0</span></div>
+    <div class="your-turn-body" id="your-turn-body"></div>
+  </div>
+
+  <div class="main" id="main-list"></div>
+
+  <!-- Create Feature Modal -->
+  <div class="modal-overlay" id="create-modal">
+    <div class="modal">
+      <h2>New Feature</h2>
+      <form id="create-form">
+        <div class="form-group"><label>Title</label><input type="text" id="feat-title" required placeholder="e.g. Add health endpoint"></div>
+        <div class="form-group"><label>Description</label><textarea id="feat-desc" required placeholder="Describe what the feature should do..."></textarea></div>
+        <div class="form-group"><label>Priority</label><select id="feat-priority"><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></div>
+        <div class="form-actions"><button type="button" class="btn" id="cancel-create">Cancel</button><button type="submit" class="btn btn-primary">Create</button></div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Create Bug Report Modal -->
+  <div class="modal-overlay" id="create-bug-modal">
+    <div class="modal">
+      <h2>New Bug Report</h2>
+      <form id="create-bug-form">
+        <div class="form-group"><label>Title</label><input type="text" id="bug-title" required placeholder="e.g. Login fails with special characters"></div>
+        <div class="form-group"><label>Description</label><textarea id="bug-desc" required placeholder="Steps to reproduce, expected vs actual behavior..." style="min-height:120px"></textarea></div>
+        <div class="form-group"><label>Priority</label><select id="bug-priority"><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></div>
+        <div class="form-actions"><button type="button" class="btn" id="cancel-create-bug">Cancel</button><button type="submit" class="btn btn-primary" style="background:var(--red);border-color:var(--red)">Submit Bug</button></div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Task Detail Modal -->
+  <div class="modal-overlay" id="detail-modal"><div class="modal" id="detail-content"></div></div>
+  <!-- Feature Detail Modal -->
+  <div class="modal-overlay" id="feature-modal"><div class="modal" id="feature-content"></div></div>
+
+<script>
+const API = '';
+let _refreshTimer = null;
+let _eventPollTimer = null;
+let _eventCursor = 0;
+let _currentDetailTaskId = null;
+let _viewTab = 'active'; // active | all | done
+let _searchFilter = '';
+let _expandedItems = new Set();
+let _boardData = null;
+
+// --- Helpers ---
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+const AGENT_PILLS = {
+  planner: 'P', triage: 'T', code_worker: 'W', code_reviewer: 'R', freebase: 'M', human: 'H',
+};
+const AGENT_COLORS = {
+  planner: 'var(--planner)', triage: 'var(--triage)', code_worker: 'var(--worker)',
+  code_reviewer: 'var(--reviewer)', freebase: 'var(--freebase)', human: 'var(--human)',
+};
+
+function agentPill(agent) {
+  const letter = AGENT_PILLS[agent] || '?';
+  return `<span class="task-agent-pill pill-${letter}">${letter}</span>`;
+}
+
+function statusPill(status) {
+  const labels = {
+    done: 'Done', in_progress: 'In Progress', planning: 'Planning', triaging: 'Triaging',
+    merging: 'Merging', needs_info: 'Needs Info', awaiting_approval: 'Approve', pending: 'Pending',
+  };
+  return `<span class="item-status status-${status}">${labels[status] || status}</span>`;
+}
+
+// --- Board fetch ---
+async function refreshBoard() {
+  try {
+    const resp = await fetch(`${API}/api/board?done_limit=200&done_offset=0`);
+    _boardData = await resp.json();
+    renderView();
+  } catch (e) { console.error('Refresh failed:', e); }
+}
+
+function renderView() {
+  const data = _boardData;
+  if (!data) return;
+
+  // Header stats
+  const stats = document.getElementById('header-stats');
+  const agents = data.agents || {};
+  const agentParts = [];
+  for (const [a, n] of Object.entries(agents)) {
+    if (n > 0) agentParts.push(`<span style="color:${AGENT_COLORS[a] || 'var(--text-dim)'}">${n}${AGENT_PILLS[a] || '?'}</span>`);
+  }
+  const agentStr = agentParts.length
+    ? agentParts.join(' ') + ` <span style="color:var(--text-dim)">/ ${data.max_concurrent}</span>`
+    : '<span style="color:var(--text-dim)">idle</span>';
+  const costStr = data.total_cost_usd != null
+    ? `<span style="color:var(--orange)">$${data.total_cost_usd.toFixed(2)}</span> <span style="color:var(--text-dim)">(${data.total_tasks} runs)</span>`
+    : '';
+  stats.innerHTML = `${agentStr}${costStr ? '<span style="margin-left:4px">|</span> ' + costStr : ''}`;
+
+  // Build feature map + tasks per feature
+  const featureMap = {};
+  const tasksByFeature = {};
+  for (const f of data.features) { featureMap[f.id] = f; tasksByFeature[f.id] = []; }
+
+  const allTasks = [...data.queue, ...data.active, ...(data.blocked || []), ...(data.failed || []), ...data.done];
+  for (const t of allTasks) {
+    if (!tasksByFeature[t.root_feature_id]) tasksByFeature[t.root_feature_id] = [];
+    tasksByFeature[t.root_feature_id].push(t);
+  }
+
+  // Determine which features to show
+  const activeStatuses = new Set(['pending', 'planning', 'triaging', 'in_progress', 'merging', 'awaiting_approval', 'needs_info']);
+
+  let features;
+  if (_viewTab === 'active') features = data.features.filter(f => activeStatuses.has(f.status));
+  else if (_viewTab === 'done') features = data.features.filter(f => f.status === 'done');
+  else features = data.features;
+
+  // Apply search filter
+  if (_searchFilter) {
+    const q = _searchFilter.toLowerCase();
+    features = features.filter(f => f.id.toLowerCase().includes(q) || f.title.toLowerCase().includes(q));
+  }
+
+  // Sort: human-action first, then by updated_at descending
+  const statusOrder = { needs_info: 0, awaiting_approval: 1, planning: 2, triaging: 3, in_progress: 4, merging: 5, pending: 6, done: 7 };
+  features.sort((a, b) => (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9) || b.updated_at.localeCompare(a.updated_at));
+
+  // Tabs
+  const tabs = document.getElementById('view-tabs');
+  tabs.innerHTML = ['active', 'done', 'all'].map(tab => {
+    let count;
+    if (tab === 'active') count = data.features.filter(f => activeStatuses.has(f.status)).length;
+    else if (tab === 'done') count = data.features.filter(f => f.status === 'done').length;
+    else count = data.features.length;
+    const label = tab.charAt(0).toUpperCase() + tab.slice(1);
+    return `<button class="tab-btn ${_viewTab === tab ? 'active' : ''}" onclick="_viewTab='${tab}';renderView()">${label} <span style="opacity:0.6">${count}</span></button>`;
+  }).join('');
+
+  // --- Your Turn pane (persistent, separate from tabs) ---
+  // Skip re-render if user is typing in a response input
+  const ytPane = document.getElementById('your-turn-pane');
+  const ytBody = document.getElementById('your-turn-body');
+  const activeEl = document.activeElement;
+  const ytHasFocus = ytBody && ytBody.contains(activeEl) && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
+  if (ytHasFocus) { /* preserve current pane, don't re-render */ } else {
+  const ytItems = [];
+
+  // Features needing human action
+  for (const f of data.features) {
+    if (f.status === 'awaiting_approval') {
+      ytItems.push({ type: 'approve', id: f.id, title: f.title, kind: f.kind,
+        desc: 'Plan ready for approval', featureId: f.id });
+    } else if (f.status === 'needs_info') {
+      ytItems.push({ type: 'info', id: f.id, title: f.title, kind: f.kind,
+        desc: 'More information requested', featureId: f.id });
+    }
+  }
+  // Human question tasks
+  for (const t of (data.blocked || [])) {
+    if (t.agent === 'human') {
+      const feat = featureMap[t.root_feature_id];
+      ytItems.push({ type: 'question', id: t.id, title: t.title, kind: feat?.kind,
+        desc: t.description, taskId: t.id, featureId: t.root_feature_id,
+        featureTitle: feat?.title });
+    }
+  }
+  // Failed tasks
+  for (const t of (data.failed || [])) {
+    const feat = featureMap[t.root_feature_id];
+    ytItems.push({ type: 'failed', id: t.id, title: `${t.id}: ${t.title}`, kind: feat?.kind,
+      desc: `Failed task for ${feat?.title || t.root_feature_id}`, taskId: t.id, featureId: t.root_feature_id });
+  }
+
+  document.getElementById('your-turn-count').textContent = ytItems.length;
+  if (ytItems.length === 0) {
+    ytPane.classList.add('empty');
+  } else {
+    ytPane.classList.remove('empty');
+    ytBody.innerHTML = '';
+    for (const item of ytItems) {
+      const card = document.createElement('div');
+      let cls = 'your-turn-card';
+      if (item.type === 'approve') cls += ' action-approve';
+      else if (item.type === 'info') cls += ' action-info';
+      else if (item.type === 'failed') cls += ' action-failed';
+      card.className = cls;
+
+      let actionsHtml = '';
+      let extraHtml = '';
+      if (item.type === 'approve') {
+        actionsHtml = `<button class="btn btn-sm btn-approve" onclick="approveFeature('${item.featureId}')">Approve</button>
+          <button class="btn btn-sm" onclick="showFeatureDetail('${item.featureId}')">View</button>`;
+      } else if (item.type === 'info') {
+        actionsHtml = `<button class="btn btn-sm" onclick="showFeatureDetail('${item.featureId}')" style="color:var(--red);border-color:var(--red)">Update</button>`;
+      } else if (item.type === 'question') {
+        extraHtml = `<div class="ytc-input-row">
+          <input type="text" id="yt-resp-${item.taskId}" placeholder="Your answer..."
+            onkeydown="if(event.key==='Enter')respondToTask('${item.taskId}')">
+          <button class="btn btn-sm btn-primary" onclick="respondToTask('${item.taskId}')">Reply</button>
+        </div>`;
+      } else if (item.type === 'failed') {
+        actionsHtml = `<button class="btn btn-sm" onclick="retryTask('${item.taskId}')">Retry</button>
+          <button class="btn btn-sm btn-danger" onclick="abandonTask('${item.taskId}')">Drop</button>`;
+      }
+
+      card.innerHTML = `
+        <div class="ytc-content">
+          <span class="ytc-id">${item.id}</span>
+          <div class="ytc-title">${esc(item.title)}</div>
+          ${item.desc ? `<div class="ytc-desc">${esc(item.desc).slice(0,200)}</div>` : ''}
+          ${extraHtml}
+        </div>
+        <div class="ytc-actions">${actionsHtml}</div>
+      `;
+      ytBody.appendChild(card);
+    }
+  }
+
+  } // end ytHasFocus guard
+
+  // --- Main list ---
+  const main = document.getElementById('main-list');
+  const mainHasFocus = main.contains(activeEl) && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
+  if (mainHasFocus) return; // don't nuke the DOM while user is typing
+  main.innerHTML = '';
+
+  if (!features.length) {
+    main.innerHTML = `<div class="empty-state">${_viewTab === 'yours' ? 'Nothing needs your attention' : 'No items'}</div>`;
+    return;
+  }
+
+  for (const f of features) {
+    const tasks = (tasksByFeature[f.id] || []);
+    const isExpanded = _expandedItems.has(f.id);
+
+    // Current active agent
+    const activeTask = tasks.find(t => t.status === 'in_progress');
+    const failedTasks = tasks.filter(t => t.status === 'failed');
+    const humanTasks = tasks.filter(t => t.agent === 'human' && t.status === 'blocked');
+
+    let agentHtml = '';
+    if (activeTask) {
+      const color = AGENT_COLORS[activeTask.agent] || 'var(--text-dim)';
+      agentHtml = `<span class="agent-dot running" style="background:${color}"></span> ${AGENT_PILLS[activeTask.agent] || '?'}`;
+    } else if (humanTasks.length) {
+      agentHtml = `<span class="agent-dot" style="background:var(--human)"></span> ?`;
+    } else if (failedTasks.length) {
+      agentHtml = `<span style="color:var(--red);font-size:10px">FAIL</span>`;
+    }
+
+    // Action buttons
+    let actions = '';
+    if (f.status !== 'done') {
+      actions = `<button class="abandon-btn" onclick="event.stopPropagation();abandonFeature('${f.id}')" title="Abandon">abandon</button>`;
+    }
+
+    const taskCount = tasks.length;
+    const expandArrow = taskCount > 0 ? (isExpanded ? '\u25BE' : '\u25B8') : '';
+
+    const row = document.createElement('div');
+    row.className = `item-row${isExpanded ? ' expanded' : ''}`;
+    row.innerHTML = `
+      <span class="item-expand" title="${taskCount} tasks">${expandArrow}</span>
+      <span class="item-id">${f.id}</span>
+      <span class="item-title-col">
+        <span class="item-kind ${f.kind}">${f.kind === 'bug_report' ? 'Bug' : 'Feat'}</span>
+        <span class="item-title">${esc(f.title)}</span>
+      </span>
+      ${statusPill(f.status)}
+      <span class="item-agent">${agentHtml}</span>
+      <span class="item-actions">${actions}</span>
+    `;
+    // Click the row to open feature detail
+    row.onclick = () => showFeatureDetail(f.id);
+    // Click the expand arrow to toggle tasks (stop propagation so it doesn't open detail)
+    row.querySelector('.item-expand').onclick = (e) => {
+      e.stopPropagation();
+      if (taskCount === 0) return;
+      if (isExpanded) _expandedItems.delete(f.id); else _expandedItems.add(f.id);
+      renderView();
+    };
+    main.appendChild(row);
+
+    // Expanded task drawer
+    if (isExpanded) {
+      const drawer = document.createElement('div');
+      drawer.className = 'task-drawer';
+
+      // Sort tasks: active first, then ready, then blocked/failed, then done
+      const tOrder = { in_progress: 0, ready: 1, blocked: 2, failed: 3, done: 4 };
+      const sorted = [...tasks].sort((a, b) => (tOrder[a.status] ?? 9) - (tOrder[b.status] ?? 9));
+
+      for (const t of sorted) {
+        const statusCls = t.status === 'done' ? 'done' : t.status === 'in_progress' ? 'running'
+          : t.status === 'failed' ? 'failed' : t.status === 'blocked' ? 'blocked' : 'ready';
+
+        const trow = document.createElement('div');
+        trow.className = 'task-row';
+        trow.innerHTML = `
+          <span class="task-id">${t.id}</span>
+          ${agentPill(t.agent)}
+          <span class="task-title">${esc(t.title)}</span>
+          <span class="task-status"><span class="${statusCls}">${t.status}</span></span>
+        `;
+        trow.onclick = (e) => { e.stopPropagation(); showTaskDetail(t.id); };
+        drawer.appendChild(trow);
+
+        // Human task inline response
+        if (t.agent === 'human' && t.status === 'blocked') {
+          const desc = document.createElement('div');
+          desc.className = 'human-response desc';
+          desc.textContent = t.description;
+          desc.onclick = e => e.stopPropagation();
+          drawer.appendChild(desc);
+
+          const resp = document.createElement('div');
+          resp.className = 'human-response';
+          resp.innerHTML = `
+            <input type="text" id="resp-${t.id}" placeholder="Type your answer..." onkeydown="if(event.key==='Enter'){event.stopPropagation();respondToTask('${t.id}')}">
+            <button class="btn btn-sm btn-primary" onclick="event.stopPropagation();respondToTask('${t.id}')">Reply</button>
+          `;
+          resp.onclick = e => e.stopPropagation();
+          drawer.appendChild(resp);
+        }
+
+        // Failed task retry/abandon
+        if (t.status === 'failed') {
+          const acts = document.createElement('div');
+          acts.style.cssText = 'padding: 4px 6px 4px 104px; display:flex; gap:4px;';
+          acts.innerHTML = `
+            <button class="btn btn-sm" onclick="event.stopPropagation();retryTask('${t.id}')">Retry</button>
+            <button class="btn btn-sm btn-danger" onclick="event.stopPropagation();abandonTask('${t.id}')">Abandon</button>
+          `;
+          acts.onclick = e => e.stopPropagation();
+          drawer.appendChild(acts);
+        }
+      }
+      main.appendChild(drawer);
+    }
+  }
+}
+
+// --- Search ---
+document.getElementById('search-input').addEventListener('input', (e) => {
+  _searchFilter = e.target.value;
+  renderView();
+});
+
+// --- Task detail ---
+function closeDetailModal() {
+  document.getElementById('detail-modal').classList.remove('active');
+  if (_eventPollTimer) { clearInterval(_eventPollTimer); _eventPollTimer = null; }
+  _currentDetailTaskId = null;
+}
+
+function renderMd(raw) {
+  let html = esc(raw);
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => `<pre><code>${code.replace(/</g,'&lt;')}</code></pre>`);
+  html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
+  html = html.replace(/^---$/gm, '<hr>');
+  html = html.replace(/(?:^- .+\n?)+/gm, (block) => {
+    const items = block.trim().split('\n').map(l => `<li>${l.replace(/^- /, '')}</li>`).join('');
+    return `<ul>${items}</ul>`;
+  });
+  html = html.replace(/(?:^\d+\. .+\n?)+/gm, (block) => {
+    const items = block.trim().split('\n').map(l => `<li>${l.replace(/^\d+\. /, '')}</li>`).join('');
+    return `<ol>${items}</ol>`;
+  });
+  html = html.replace(/^(?!<[hupob]|<li|<hr|<code|<pre)(.+)$/gm, '<p>$1</p>');
+  html = html.replace(/<p><(h[123]|ul|ol|pre|blockquote|hr)/g, '<$1');
+  html = html.replace(/<\/(h[123]|ul|ol|pre|blockquote)><\/p>/g, '</$1>');
+  return html;
+}
+
+function renderTriageResult(r) {
+  const verdictClass = r.verdict === 'valid' ? 'approved' : 'needs_changes';
+  const verdictLabel = r.verdict === 'valid' ? 'Valid Bug' : 'Needs Info';
+  let questionsHtml = '';
+  if (r.questions && r.questions.length > 0) {
+    const qItems = r.questions.map(q => `<li style="margin-bottom:4px">${esc(q)}</li>`).join('');
+    questionsHtml = `<div style="margin-top:8px"><div style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-dim);margin-bottom:4px;font-weight:600">Questions</div><ol style="padding-left:18px;font-size:12px;color:var(--text)">${qItems}</ol></div>`;
+  }
+  return `<div class="detail-section"><div class="result-card"><div class="result-header"><span class="result-label">Triage Result</span><span class="result-outcome ${verdictClass}">${verdictLabel}</span></div><div class="result-body"><div class="md-rendered">${renderMd(r.summary)}</div>${questionsHtml}</div></div></div>`;
+}
+
+function renderPlannerResult(r) {
+  return `<div class="detail-section"><div class="result-card"><div class="result-header"><span class="result-label">Plan</span></div><div class="result-body"><div class="md-rendered">${renderMd(r.plan)}</div></div></div></div>`;
+}
+
+function renderWorkerResult(r) {
+  return `<div class="detail-section"><div class="result-card"><div class="result-header"><span class="result-label">Worker Result</span></div><div class="result-body"><div class="md-rendered">${renderMd(r.summary)}</div><div class="result-field" style="margin-top:8px"><span class="result-field-label">Commit</span><span class="result-field-value" style="color:var(--green)">${esc(r.commit_id)}</span></div></div></div></div>`;
+}
+
+function renderReviewResult(r) {
+  const outcomeClass = r.review_outcome === 'approved' ? 'approved' : 'needs_changes';
+  const outcomeLabel = r.review_outcome === 'approved' ? 'Approved' : 'Needs Changes';
+  let itemsHtml = '';
+  if (r.items && r.items.length > 0) {
+    const itemCards = r.items.map(item => {
+      const typeClass = item.type || 'improvement';
+      const typeLabel = typeClass === 'bug' ? 'Bug' : 'Improvement';
+      return `<div class="review-item"><div class="review-item-header"><span class="review-item-title">${esc(item.title)}</span><span class="review-item-badges"><span class="review-item-type ${typeClass}">${typeLabel}</span><span class="review-item-priority">P${item.priority}</span></span></div><div class="review-item-desc md-rendered">${renderMd(item.description)}</div></div>`;
+    }).join('');
+    itemsHtml = `<div class="result-items">${itemCards}</div>`;
+  }
+  return `<div class="detail-section"><div class="result-card"><div class="result-header"><span class="result-label">Review Result</span><span class="result-outcome ${outcomeClass}">${outcomeLabel}</span></div><div class="result-body"><div class="md-rendered">${renderMd(r.summary)}</div>${itemsHtml}</div></div></div>`;
+}
+
+async function showTaskDetail(taskId) {
+  try {
+    const resp = await fetch(`${API}/api/tasks/${taskId}`);
+    const task = await resp.json();
+    const modal = document.getElementById('detail-modal');
+    const content = document.getElementById('detail-content');
+    const isActive = task.status === 'in_progress';
+    content.innerHTML = `
+      <h2>${task.id}: ${esc(task.title)}</h2>
+      <div class="detail-section">
+        <h3>Task</h3>
+        <div class="detail-field"><strong>Agent:</strong> ${task.agent} <strong style="margin-left:8px">Type:</strong> ${task.type} <strong style="margin-left:8px">Iter:</strong> ${task.iteration}</div>
+        <div class="detail-field"><strong>Status:</strong> ${task.status} <strong style="margin-left:8px">Priority:</strong> ${task.priority}</div>
+        <div class="detail-field"><strong>${task.root_feature_id.startsWith('BUG-') ? 'Bug:' : 'Feature:'}</strong> <a href="#" onclick="event.preventDefault();closeDetailModal();showFeatureDetail('${task.root_feature_id}')" style="color:var(--accent)">${task.root_feature_id}</a>
+          ${task.parent_task_id ? `<strong style="margin-left:8px">Parent:</strong> ${task.parent_task_id}` : ''}</div>
+        ${task.review_commit_id ? `<div class="detail-field"><strong>Commit:</strong> <code style="color:var(--green)">${task.review_commit_id}</code></div>` : ''}
+      </div>
+      <div class="detail-section"><h3>Description</h3><div class="detail-field">${esc(task.description)}</div></div>
+      ${task.triage_result ? renderTriageResult(task.triage_result) : ''}
+      ${task.planner_result ? renderPlannerResult(task.planner_result) : ''}
+      ${task.worker_result ? renderWorkerResult(task.worker_result) : ''}
+      ${task.review_result ? renderReviewResult(task.review_result) : ''}
+      <div class="detail-section">
+        <h3>Activity</h3>
+        <div class="activity-toolbar">
+          <span class="status-text" id="activity-status">Loading...</span>
+          ${isActive ? `<button class="btn-danger btn-sm" onclick="killTask('${task.id}')">Kill</button>` : ''}
+        </div>
+        <div class="activity-feed" id="activity-feed"></div>
+      </div>
+      <div class="form-actions"><button class="btn" onclick="closeDetailModal()">Close</button></div>
+    `;
+    modal.classList.add('active');
+    _currentDetailTaskId = taskId;
+    _eventCursor = 0;
+    document.getElementById('activity-feed').innerHTML = '';
+    startEventPolling(taskId);
+  } catch (e) { console.error('Failed to load task:', e); }
+}
+
+const EVT_ICONS = { start:'\u25b6', system:'\u2699', tool_call:'\u25b8', tool_result:'\u25c2', text:'\u270e', result:'\u2714', error:'\u2718' };
+const EVT_COLORS = { start:'var(--text-dim)', system:'var(--text-dim)', tool_call:'var(--cyan)', tool_result:'var(--green)', text:'var(--text)', result:'var(--green)', error:'var(--red)' };
+
+function renderEvent(evt) {
+  const div = document.createElement('div'); div.className = 'evt';
+  const elapsed = evt.elapsed != null ? `${evt.elapsed}s` : '';
+  const icon = EVT_ICONS[evt.kind] || '\u2022';
+  const color = EVT_COLORS[evt.kind] || 'var(--text-dim)';
+  let body = '';
+  switch (evt.kind) {
+    case 'start': body = `<span style="color:var(--text-dim)">Agent started</span>`; break;
+    case 'system': body = `<span style="color:var(--text-dim)">Model: ${esc(evt.model||'')} | ${(evt.tools||[]).length} tools</span>`; break;
+    case 'tool_call': {
+      const inp = evt.input ? Object.entries(evt.input).map(([k,v])=>`${k}=${v}`).join(', ') : '';
+      body = `<span class="tool-name">${esc(evt.tool)}</span>`;
+      if (inp) body += `<div class="evt-detail" onclick="this.classList.toggle('expanded')">${esc(inp)}</div>`;
+      break;
+    }
+    case 'tool_result': body = `<span class="tool-result-text">${esc(evt.summary||'ok')}</span>`; break;
+    case 'text': body = `<span class="text-output">${esc(evt.text||'')}</span>`; break;
+    case 'result': {
+      const dur = evt.duration_ms ? `${(evt.duration_ms/1000).toFixed(1)}s` : '';
+      const cost = evt.cost_usd ? `$${evt.cost_usd.toFixed(4)}` : '';
+      const turns = evt.num_turns ? `${evt.num_turns}t` : '';
+      body = `<span class="result-text">${esc(evt.subtype||'done')}</span> <span class="cost">${[dur,turns,cost].filter(Boolean).join(' | ')}</span>`;
+      if (evt.result_text) body += `<div class="evt-detail" onclick="this.classList.toggle('expanded')">${esc(evt.result_text)}</div>`;
+      break;
+    }
+    case 'error': body = `<span class="error-text">Exit ${evt.exit_code}: ${esc(evt.stderr||'')}</span>`; break;
+    default: body = `<span style="color:var(--text-dim)">${esc(evt.kind)}</span>`;
+  }
+  div.innerHTML = `<span class="evt-time">${elapsed}</span><span class="evt-icon" style="color:${color}">${icon}</span><span class="evt-body">${body}</span>`;
+  return div;
+}
+
+async function pollEvents(taskId) {
+  if (_currentDetailTaskId !== taskId) return;
+  try {
+    const resp = await fetch(`${API}/api/tasks/${taskId}/events?after=${_eventCursor}`);
+    const data = await resp.json();
+    const feed = document.getElementById('activity-feed');
+    const status = document.getElementById('activity-status');
+    if (!feed || !status) return;
+    for (const evt of data.events) { feed.appendChild(renderEvent(evt)); _eventCursor++; }
+    if (data.events.length > 0) feed.scrollTop = feed.scrollHeight;
+    const aliveColor = data.alive ? 'var(--green)' : 'var(--text-dim)';
+    const aliveLabel = data.alive ? 'running' : 'stopped';
+    status.innerHTML = `<span style="color:${aliveColor}">${aliveLabel}</span> | ${data.total} events`;
+    if (data.total === 0 && !feed.children.length) feed.innerHTML = '<div class="no-events">Waiting for agent...</div>';
+    else { const ne = feed.querySelector('.no-events'); if (ne) ne.remove(); }
+    if (!data.alive && !data.events.length && _eventPollTimer) { clearInterval(_eventPollTimer); _eventPollTimer = null; }
+  } catch (e) { console.error('Event poll failed:', e); }
+}
+
+function startEventPolling(taskId) {
+  if (_eventPollTimer) clearInterval(_eventPollTimer);
+  pollEvents(taskId);
+  _eventPollTimer = setInterval(() => pollEvents(taskId), 1500);
+}
+
+async function killTask(taskId) {
+  if (!confirm(`Kill ${taskId}?`)) return;
+  try { await fetch(`${API}/api/tasks/${taskId}/kill`, { method: 'POST' }); closeDetailModal(); refreshBoard(); }
+  catch (e) { console.error('Kill failed:', e); }
+}
+
+async function respondToTask(taskId) {
+  const input = document.getElementById(`resp-${taskId}`) || document.getElementById(`yt-resp-${taskId}`);
+  if (!input) return;
+  const response = input.value.trim();
+  if (!response) { input.focus(); return; }
+  try {
+    const resp = await fetch(`${API}/api/tasks/${taskId}/respond`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ response }) });
+    if (!resp.ok) { console.error('Respond failed:', await resp.json()); return; }
+    refreshBoard();
+  } catch (e) { console.error('Respond failed:', e); }
+}
+
+async function retryTask(taskId) {
+  try { await fetch(`${API}/api/tasks/${taskId}/retry`, { method: 'POST' }); refreshBoard(); }
+  catch (e) { console.error('Retry failed:', e); }
+}
+
+async function abandonTask(taskId) {
+  if (!confirm(`Abandon ${taskId}?`)) return;
+  try { await fetch(`${API}/api/tasks/${taskId}/abandon`, { method: 'POST' }); refreshBoard(); }
+  catch (e) { console.error('Abandon failed:', e); }
+}
+
+// --- Feature detail ---
+async function showFeatureDetail(featureId) {
+  try {
+    const resp = await fetch(`${API}/api/features/${featureId}`);
+    const feat = await resp.json();
+    const modal = document.getElementById('feature-modal');
+    const content = document.getElementById('feature-content');
+
+    let artifactHtml = '';
+    try {
+      const boardResp = await fetch(`${API}/api/board?done_limit=100&feature_id=${featureId}`);
+      const boardData = await boardResp.json();
+      const triageTask = boardData.done.filter(t => t.agent === 'triage' && t.triage_result).pop();
+      if (triageTask) artifactHtml += renderTriageResult(triageTask.triage_result);
+      const plannerTask = boardData.done.find(t => t.agent === 'planner' && t.planner_result);
+      if (plannerTask) artifactHtml += renderPlannerResult(plannerTask.planner_result);
+    } catch (_) {}
+
+    const kindLabel = feat.kind === 'bug_report' ? 'Bug Report' : 'Feature';
+    let descHtml;
+    if (feat.status === 'needs_info') {
+      descHtml = `<div class="detail-section"><h3>Description <span style="font-size:10px;color:var(--red);font-weight:400">(update and resubmit)</span></h3><textarea id="feat-edit-desc" style="width:100%;min-height:120px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:5px;font-size:13px;font-family:inherit;resize:vertical">${esc(feat.description)}</textarea></div>`;
+    } else {
+      descHtml = `<div class="detail-section"><h3>Description</h3><div class="detail-field">${esc(feat.description)}</div></div>`;
+    }
+    // Artifacts always shown (triage result, plan, etc.)
+
+    // Plan feedback section (only when awaiting approval)
+    let planFeedbackHtml = '';
+    if (feat.status === 'awaiting_approval') {
+      planFeedbackHtml = `<div class="detail-section">
+        <h3>Feedback on Plan</h3>
+        <textarea id="plan-feedback" placeholder="Request changes to the plan..." style="width:100%;min-height:60px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:5px;font-size:13px;font-family:inherit;resize:vertical"></textarea>
+      </div>`;
+    }
+
+    const actions = [];
+    if (feat.status === 'awaiting_approval') {
+      actions.push(`<button class="btn" onclick="revisePlan('${feat.id}')" style="color:var(--orange);border-color:var(--orange)">Request Changes</button>`);
+      actions.push(`<button class="btn btn-approve" onclick="approveFeature('${feat.id}')">Approve Plan</button>`);
+    }
+    if (feat.status === 'needs_info') actions.push(`<button class="btn btn-approve" onclick="resubmitFeature('${feat.id}')">Resubmit</button>`);
+    if (feat.status !== 'done') actions.push(`<button class="btn-danger btn-sm" style="margin-right:auto" onclick="abandonFeature('${feat.id}')">Abandon</button>`);
+    actions.push(`<button class="btn" onclick="document.getElementById('feature-modal').classList.remove('active')">Close</button>`);
+
+    // For needs_info: show artifacts first (triage questions), then editable description
+    // For everything else: description first, then artifacts
+    const bodyOrder = feat.status === 'needs_info'
+      ? `${artifactHtml}${descHtml}`
+      : `${descHtml}${artifactHtml}`;
+
+    content.innerHTML = `
+      <h2>${feat.id}: ${esc(feat.title)} <span style="font-size:12px;color:var(--text-dim);font-weight:400">${kindLabel}</span></h2>
+      <div class="detail-section">
+        <div class="detail-field"><strong>Status:</strong> ${feat.status} <strong style="margin-left:8px">Iterations:</strong> ${feat.iteration_count}</div>
+        <div class="detail-field"><strong>Current Task:</strong> ${feat.current_task_id||'none'} <strong style="margin-left:8px">Commit:</strong> ${feat.latest_commit_id ? `<code style="color:var(--green)">${feat.latest_commit_id.slice(0,12)}</code>` : 'none'}</div>
+      </div>
+      ${bodyOrder}
+      ${planFeedbackHtml}
+      <div class="form-actions">${actions.join('')}</div>
+    `;
+    modal.classList.add('active');
+  } catch (e) { console.error('Failed to load feature:', e); }
+}
+
+async function revisePlan(featureId) {
+  const el = document.getElementById('plan-feedback');
+  const feedback = el ? el.value.trim() : '';
+  if (!feedback) { if (el) el.focus(); return; }
+  try {
+    const resp = await fetch(`${API}/api/features/${featureId}/revise-plan`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ feedback }),
+    });
+    if (!resp.ok) { console.error('Revise failed:', await resp.json()); return; }
+    document.getElementById('feature-modal').classList.remove('active');
+    refreshBoard();
+  } catch (e) { console.error('Revise failed:', e); }
+}
+
+async function approveFeature(featureId) {
+  try {
+    const resp = await fetch(`${API}/api/features/${featureId}/approve`, { method: 'POST' });
+    if (!resp.ok) { console.error('Approve failed:', await resp.json()); return; }
+    document.getElementById('feature-modal').classList.remove('active');
+    refreshBoard();
+  } catch (e) { console.error('Approve failed:', e); }
+}
+
+async function resubmitFeature(featureId) {
+  const descEl = document.getElementById('feat-edit-desc');
+  if (descEl) {
+    const newDesc = descEl.value.trim();
+    if (newDesc) {
+      try { await fetch(`${API}/api/features/${featureId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ description: newDesc }) });
+      } catch (e) { console.error('Update failed:', e); return; }
+    }
+  }
+  try {
+    const resp = await fetch(`${API}/api/features/${featureId}/resubmit`, { method: 'POST' });
+    if (!resp.ok) { console.error('Resubmit failed:', await resp.json()); return; }
+    document.getElementById('feature-modal').classList.remove('active');
+    refreshBoard();
+  } catch (e) { console.error('Resubmit failed:', e); }
+}
+
+async function abandonFeature(featureId) {
+  if (!confirm(`Abandon ${featureId}? All tasks will be closed.`)) return;
+  try {
+    const resp = await fetch(`${API}/api/features/${featureId}/abandon`, { method: 'POST' });
+    if (!resp.ok) { console.error('Abandon failed:', await resp.json()); return; }
+    document.getElementById('feature-modal').classList.remove('active');
+    refreshBoard();
+  } catch (e) { console.error('Abandon failed:', e); }
+}
+
+// --- Create forms ---
+document.getElementById('create-btn').addEventListener('click', () => { document.getElementById('create-modal').classList.add('active'); document.getElementById('feat-title').focus(); });
+document.getElementById('cancel-create').addEventListener('click', () => document.getElementById('create-modal').classList.remove('active'));
+document.getElementById('create-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const title = document.getElementById('feat-title').value.trim();
+  const description = document.getElementById('feat-desc').value.trim();
+  const priority = document.getElementById('feat-priority').value;
+  if (!title || !description) return;
+  try {
+    await fetch(`${API}/api/features`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, description, priority }) });
+    document.getElementById('create-modal').classList.remove('active');
+    document.getElementById('create-form').reset();
+    refreshBoard();
+  } catch (e) { console.error('Create failed:', e); }
+});
+
+document.getElementById('create-bug-btn').addEventListener('click', () => { document.getElementById('create-bug-modal').classList.add('active'); document.getElementById('bug-title').focus(); });
+document.getElementById('cancel-create-bug').addEventListener('click', () => document.getElementById('create-bug-modal').classList.remove('active'));
+document.getElementById('create-bug-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const title = document.getElementById('bug-title').value.trim();
+  const description = document.getElementById('bug-desc').value.trim();
+  const priority = document.getElementById('bug-priority').value;
+  if (!title || !description) return;
+  try {
+    await fetch(`${API}/api/bug-reports`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, description, priority }) });
+    document.getElementById('create-bug-modal').classList.remove('active');
+    document.getElementById('create-bug-form').reset();
+    refreshBoard();
+  } catch (e) { console.error('Create bug failed:', e); }
+});
+
+// Close modals
+for (const id of ['create-modal', 'create-bug-modal', 'detail-modal', 'feature-modal']) {
+  document.getElementById(id).addEventListener('click', e => {
+    if (e.target === e.currentTarget) {
+      e.currentTarget.classList.remove('active');
+      if (id === 'detail-modal') { if (_eventPollTimer) { clearInterval(_eventPollTimer); _eventPollTimer = null; } _currentDetailTaskId = null; }
+    }
+  });
+}
+
+// --- Janky mode ---
+const jankyToggle = document.getElementById('janky-toggle');
+fetch(`${API}/api/settings`).then(r => r.json()).then(d => { jankyToggle.checked = d.janky_mode; }).catch(() => {});
+jankyToggle.addEventListener('change', async () => {
+  try {
+    const resp = await fetch(`${API}/api/settings/janky-mode`, { method: 'POST' });
+    const d = await resp.json();
+    jankyToggle.checked = d.janky_mode;
+  } catch (e) { console.error('Toggle failed:', e); }
+});
+
+// --- Auto-refresh ---
+refreshBoard();
+_refreshTimer = setInterval(refreshBoard, 3000);
+</script>
+</body>
+</html>
