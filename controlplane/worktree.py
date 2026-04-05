@@ -243,8 +243,12 @@ def sync_default_branch(repo_path: str, github_client=None) -> None:
 # --- Memory symlinks ---
 
 def _claude_project_slug(path: str) -> str:
-    """Convert an absolute path to Claude CLI's project directory slug."""
-    return path.replace("/", "-").lstrip("-")
+    """Convert an absolute path to Claude CLI's project directory slug.
+
+    Claude CLI replaces / with - and strips dots, keeping the leading -.
+    E.g. /tank/workspace/kanban/.worktrees/X → -tank-workspace-kanban--worktrees-X
+    """
+    return path.replace("/", "-").replace(".", "-")
 
 
 def setup_memory_symlink(repo_path: str, worktree_path: str) -> None:
