@@ -912,6 +912,7 @@ async function showFeatureDetail(featureId) {
       actions.push(`<button class="btn btn-approve" onclick="approveFeature('${feat.id}')">Approve Plan</button>`);
     }
     if (feat.status === 'needs_info') actions.push(`<button class="btn btn-approve" onclick="resubmitFeature('${feat.id}')">Resubmit</button>`);
+    if (feat.status === 'done') actions.push(`<button class="btn btn-sm" style="margin-right:auto;color:var(--orange);border-color:var(--orange)" onclick="refileFeature('${feat.id}')">Refile</button>`);
     if (feat.status !== 'done') actions.push(`<button class="btn-danger btn-sm" style="margin-right:auto" onclick="abandonFeature('${feat.id}')">Abandon</button>`);
     actions.push(`<button class="btn" onclick="document.getElementById('feature-modal').classList.remove('active')">Close</button>`);
 
@@ -976,6 +977,17 @@ async function resubmitFeature(featureId) {
     document.getElementById('feature-modal').classList.remove('active');
     refreshBoard();
   } catch (e) { console.error('Resubmit failed:', e); }
+}
+
+async function refileFeature(featureId) {
+  if (!confirm(`Refile ${featureId}? It will be re-run from where it left off.`)) return;
+  try {
+    const resp = await fetch(`${API}/api/features/${featureId}/refile`, { method: 'POST' });
+    if (!resp.ok) { const err = await resp.json(); alert(err.detail || 'Refile failed'); return; }
+    const data = await resp.json();
+    document.getElementById('feature-modal').classList.remove('active');
+    refreshBoard();
+  } catch (e) { console.error('Refile failed:', e); }
 }
 
 async function abandonFeature(featureId) {

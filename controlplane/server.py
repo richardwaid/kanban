@@ -281,6 +281,82 @@ def resubmit_feature(feature_id: str):
     return {"ok": True, "task_id": tid}
 
 
+@app.post("/api/features/{feature_id}/refile", tags=["Features"])
+def refile_feature(feature_id: str):
+    """Re-run a done/abandoned feature from where it left off.
+
+    If the work branch exists on the remote, creates a freebase task to merge it.
+    Otherwise, creates a new worker task to re-implement.
+    """
+    feature = store.load_feature(feature_id)
+    if not feature:
+        raise HTTPException(status_code=404, detail="Not found")
+    if feature.status != FeatureStatus.DONE.value:
+        raise HTTPException(status_code=400, detail=f"Can only refile done features (status: {feature.status})")
+
+    import subprocess
+    branch_name = f"work/{feature_id}"
+    repo_path = REPO_PATH
+
+    # Check if the branch exists on the remote
+    result = subprocess.run(
+        ["git", "-C", repo_path, "ls-remote", "--heads", "origin", branch_name],
+        capture_output=True, text=True,
+    )
+    branch_on_remote = branch_name in result.stdout
+
+    tid = store._next_task_id()
+
+    if branch_on_remote:
+        # Branch exists — just needs merge. Create freebase task.
+        task = Task(
+            id=tid,
+            root_feature_id=feature.id,
+            agent="freebase",
+            type="merge",
+            title=f"Merge {branch_name} (refiled)",
+            description=f"Re-merge branch {branch_name} for: {feature.title}",
+            priority="high",
+            branch_name=branch_name,
+        )
+        feature.status = FeatureStatus.MERGING.value
+        logger.info("Refiled %s: branch exists on remote, creating freebase task %s", feature_id, tid)
+    else:
+        # No branch — restart from worker
+        task = Task(
+            id=tid,
+            root_feature_id=feature.id,
+            agent="code_worker",
+            type="implement",
+            title=feature.title,
+            description=feature.description,
+            priority="high",
+        )
+        feature.status = FeatureStatus.IN_PROGRESS.value
+        logger.info("Refiled %s: no branch, creating worker task %s", feature_id, tid)
+
+    store.save_task(task)
+    feature.current_task_id = tid
+    store.save_feature(feature)
+
+    # Re-open GitHub PR if it was closed
+    if _github_client and feature.github_pr_number and branch_on_remote:
+        try:
+            _github_client._request(
+                "PATCH", f"/repos/{_github_client.repo}/pulls/{feature.github_pr_number}",
+                json={"state": "open"},
+            )
+            logger.info("Re-opened PR #%d for %s", feature.github_pr_number, feature_id)
+        except Exception:
+            # PR can't be re-opened (e.g. branch was deleted on GitHub) — will create new one
+            feature.github_pr_number = None
+            feature.github_pr_url = None
+            store.save_feature(feature)
+            logger.info("Could not re-open PR for %s, will create new one", feature_id)
+
+    return {"ok": True, "task_id": tid, "action": "merge" if branch_on_remote else "implement"}
+
+
 @app.post("/api/features/{feature_id}/abandon", tags=["Features"])
 def abandon_feature(feature_id: str):
     """Abandon a feature or bug report. Kills any running tasks, moves all to done."""
@@ -318,6 +394,11 @@ def abandon_feature(feature_id: str):
     if _github_client and feature.github_issue_number:
         from controlplane.github_sync import close_issue
         close_issue(_github_client, feature)
+
+    # Sync local branch with remote
+    if _github_client:
+        from controlplane.worktree import sync_default_branch
+        sync_default_branch(REPO_PATH, _github_client)
 
     logger.info("Feature %s abandoned", feature_id)
     return {"ok": True}

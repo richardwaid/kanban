@@ -183,7 +183,6 @@ def _mark_feature_done(feature: Feature) -> None:
                     pass  # Branch may already be cleaned up
                 try:
                     github_client.merge_pr(feature.github_pr_number, merge_method="squash")
-                    worktree.sync_default_branch(REPO_PATH, github_client)
                     logger.info("Merged PR #%d for %s", feature.github_pr_number, feature.id)
                 except Exception:
                     # PR might already be merged or unmergeable — close it
@@ -195,6 +194,10 @@ def _mark_feature_done(feature: Feature) -> None:
                         logger.info("Closed unmergeable PR #%d for %s", feature.github_pr_number, feature.id)
                     except Exception:
                         logger.exception("Failed to close PR #%d", feature.github_pr_number)
+
+        # Always sync local branch with remote after any PR operation
+        worktree.sync_default_branch(REPO_PATH, github_client)
+
         # Close linked GitHub issue
         if feature.github_issue_number:
             from controlplane.github_sync import close_issue
@@ -237,20 +240,29 @@ def _handle_freebase_github(task: Task, feature, github_client) -> None:
     store.move_task(task, "done")
 
     if auto_merge and feature.github_pr_number:
-        try:
-            github_client.merge_pr(feature.github_pr_number, merge_method="squash")
-            logger.info("Auto-merged PR #%d for %s", feature.github_pr_number, feature.id)
+        # Retry merge a few times (GitHub may need time to compute mergeability)
+        import time as _time
+        merged = False
+        for attempt in range(3):
+            try:
+                github_client.merge_pr(feature.github_pr_number, merge_method="squash")
+                logger.info("Auto-merged PR #%d for %s", feature.github_pr_number, feature.id)
+                merged = True
+                break
+            except Exception:
+                if attempt < 2:
+                    logger.info("Merge attempt %d failed for PR #%d, retrying in 5s...",
+                                attempt + 1, feature.github_pr_number)
+                    _time.sleep(5)
+                else:
+                    logger.exception("Auto-merge failed after 3 attempts for PR #%d", feature.github_pr_number)
 
-            # Sync local default branch
+        if merged:
             worktree.sync_default_branch(REPO_PATH, github_client)
-
-            # Clean up
             worktree.delete_branch(REPO_PATH, branch_name)
-            _mark_feature_done(feature)
-        except Exception:
-            logger.exception("Auto-merge failed for PR #%d", feature.github_pr_number)
-            feature.status = FeatureStatus.MERGING.value
-            store.save_feature(feature)
+
+        # Always mark done — _mark_feature_done will handle any remaining PR cleanup
+        _mark_feature_done(feature)
     else:
         logger.info("PR #%d for %s (auto-merge disabled)", feature.github_pr_number, feature.id)
 
