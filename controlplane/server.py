@@ -301,6 +301,24 @@ def abandon_feature(feature_id: str):
     feature.status = FeatureStatus.DONE.value
     feature.current_task_id = None
     store.save_feature(feature)
+
+    # Close open PR on GitHub if applicable
+    if _github_client and feature.github_pr_number:
+        try:
+            _github_client._request(
+                "PATCH", f"/repos/{_github_client.repo}/pulls/{feature.github_pr_number}",
+                json={"state": "closed"},
+            )
+            _github_client.add_comment(feature.github_pr_number, "Feature abandoned. Closing PR.")
+            logger.info("Closed PR #%d for abandoned %s", feature.github_pr_number, feature_id)
+        except Exception:
+            logger.exception("Failed to close PR #%d", feature.github_pr_number)
+
+    # Close linked GitHub issue if applicable
+    if _github_client and feature.github_issue_number:
+        from controlplane.github_sync import close_issue
+        close_issue(_github_client, feature)
+
     logger.info("Feature %s abandoned", feature_id)
     return {"ok": True}
 

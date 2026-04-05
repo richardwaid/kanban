@@ -168,11 +168,38 @@ def _mark_feature_done(feature: Feature) -> None:
     store.save_feature(feature)
     # Clean up the persistent feature worktree
     worktree.remove_feature_worktree(REPO_PATH, feature.id)
-    # Close linked GitHub issue if applicable
+
     github_client = _get_github_client()
-    if github_client and feature.github_issue_number:
-        from controlplane.github_sync import close_issue
-        close_issue(github_client, feature)
+    if github_client:
+        # Merge open PR if it exists
+        if feature.github_pr_number:
+            auto_merge = os.environ.get("KANBAN_AUTO_MERGE", "true").lower() == "true"
+            if auto_merge:
+                try:
+                    # Push latest commits first
+                    branch_name = f"work/{feature.id}"
+                    worktree.push_branch(REPO_PATH, branch_name, github_client)
+                except Exception:
+                    pass  # Branch may already be cleaned up
+                try:
+                    github_client.merge_pr(feature.github_pr_number, merge_method="squash")
+                    worktree.sync_default_branch(REPO_PATH, github_client)
+                    logger.info("Merged PR #%d for %s", feature.github_pr_number, feature.id)
+                except Exception:
+                    # PR might already be merged or unmergeable — close it
+                    try:
+                        github_client._request(
+                            "PATCH", f"/repos/{github_client.repo}/pulls/{feature.github_pr_number}",
+                            json={"state": "closed"},
+                        )
+                        logger.info("Closed unmergeable PR #%d for %s", feature.github_pr_number, feature.id)
+                    except Exception:
+                        logger.exception("Failed to close PR #%d", feature.github_pr_number)
+        # Close linked GitHub issue
+        if feature.github_issue_number:
+            from controlplane.github_sync import close_issue
+            close_issue(github_client, feature)
+
     logger.info("Feature %s marked done.", feature.id)
 
 
