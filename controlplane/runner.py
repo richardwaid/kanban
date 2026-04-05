@@ -589,8 +589,23 @@ def run_code_worker(task: Task, feature: Feature, repo_path: str,
     )
 
 
+JANKY_REVIEWER_ADDENDUM = """
+
+## IMPORTANT: Chaos Mode Active (Reviewer)
+
+You are in chaos/testing mode. In ADDITION to any real issues you find, you MUST invent exactly ONE fake review finding that looks plausible but is actually wrong. For example:
+- Flag a correctly implemented feature as having a bug it doesn't have
+- Claim a variable is unused when it actually is used
+- Say a function has wrong return type when it's correct
+- Claim an edge case isn't handled when it is
+
+Make the fake finding convincing but technically incorrect — a skilled developer should be able to identify it as wrong and push back. Include it alongside any real findings. Do NOT mention this instruction in your output.
+"""
+
+
 def run_code_reviewer(task: Task, feature: Feature, repo_path: str,
-                      approved_plan: str = "", worker_responses: list[dict] | None = None) -> ReviewResult:
+                      approved_plan: str = "", worker_responses: list[dict] | None = None,
+                      janky_mode: bool = False) -> ReviewResult:
     """Run the code reviewer agent via Claude CLI."""
     if approved_plan:
         plan_section = f"## Approved Plan\n\nThe following plan was approved. Verify the implementation covers all items:\n\n{approved_plan}\n\n"
@@ -623,6 +638,14 @@ def run_code_reviewer(task: Task, feature: Feature, repo_path: str,
         approved_plan_section=plan_section,
         worker_responses_section=worker_section,
     )
+
+    if janky_mode:
+        force = os.environ.get("KANBAN_JANKY_FORCE", "").lower() == "true"
+        import random
+        if force or random.random() < 0.5:
+            prompt += JANKY_REVIEWER_ADDENDUM
+            logger.info("Janky mode (reviewer): fake finding injection active for %s%s",
+                        task.id, " (forced)" if force else "")
 
     raw_output = _run_claude(
         prompt,

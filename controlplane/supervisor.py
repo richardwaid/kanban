@@ -17,6 +17,7 @@ from controlplane.models import (
     FeatureStatus,
     FreebaseResult,
     ReviewOutcome,
+    ReviewResult,
     Task,
     TriageVerdict,
     _now,
@@ -427,7 +428,7 @@ def _handle_code_worker(task: Task) -> None:
 
     store.save_feature(feature)
 
-    # Create reviewer task
+    # Create reviewer task — carry dispute_round so follow-up workers inherit it
     reviewer_id = store._next_task_id()
     reviewer_task = Task(
         id=reviewer_id,
@@ -440,6 +441,7 @@ def _handle_code_worker(task: Task) -> None:
         iteration=task.iteration,
         parent_task_id=task.id,
         review_commit_id=result.commit_id,
+        dispute_round=getattr(task, 'dispute_round', 0),
     )
     store.save_task(reviewer_task)
 
@@ -490,15 +492,31 @@ def _handle_code_reviewer(task: Task) -> None:
         if worker_artifact:
             worker_responses = worker_artifact.get("item_responses")
 
+    from controlplane.server import _janky_mode
     result = run_code_reviewer(task, feature, wt_path, approved_plan=approved_plan,
-                               worker_responses=worker_responses)
+                               worker_responses=worker_responses, janky_mode=_janky_mode)
 
     # Save review artifact
     store.save_review_result(task.id, asdict(result))
 
     # Mark reviewer task done
     store.move_task(task, "done")
-    logger.info("Reviewer %s done. Outcome: %s", task.id, result.review_outcome)
+    logger.info("Reviewer %s done. Outcome: %s (iteration %d, dispute_round %d)",
+                task.id, result.review_outcome, task.iteration, getattr(task, 'dispute_round', 0))
+
+    # Cap review iterations to prevent infinite loops — reload feature for fresh count
+    MAX_REVIEW_ITERATIONS = 3
+    feature = store.load_feature(feature.id) or feature  # refresh
+    if feature.iteration_count >= MAX_REVIEW_ITERATIONS:
+        if result.items or result.review_outcome != ReviewOutcome.APPROVED.value:
+            logger.warning("Feature %s hit max review iterations (%d >= %d), forcing clean approval.",
+                            feature.id, feature.iteration_count, MAX_REVIEW_ITERATIONS)
+            result = ReviewResult(
+                task_id=result.task_id, status="done",
+                review_outcome=ReviewOutcome.APPROVED.value,
+                summary=f"Force-approved after {feature.iteration_count} iterations.",
+                items=[], human_tasks=[],
+            )
 
     # Post review to GitHub PR (every iteration, not just final)
     github_client = _get_github_client()
@@ -638,6 +656,12 @@ def _create_followup_worker(parent_task: Task, feature: Feature, item, new_itera
     If all_items is provided, includes them as structured review feedback
     so the worker can fix or dispute each one.
     """
+    # Guard: don't create tasks for abandoned/done features
+    fresh = store.load_feature(feature.id)
+    if fresh and fresh.status == FeatureStatus.DONE.value:
+        logger.warning("Refusing to create follow-up for done feature %s", feature.id)
+        return
+
     import json as _json
 
     description = item.description
